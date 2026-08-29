@@ -196,9 +196,9 @@ class ForceAlignerGGUFArgs:
     llm_fn = ModelPaths.force_aligner_gguf_llm_decode.name
 
     # 显卡加速
-    onnx_provider = 'CPU'       # ONNX 推理后端 (CPU, DML)
+    onnx_provider = 'CPU'       # ONNX 推理后端 (CPU, DML)(推荐保持 DML)
     llm_use_gpu = False          # 是否启用 GPU 加速 GGUF 模型
     
     # 对齐细节
-    n_ctx = 3072                # 上下文窗口大小
+    n_ctx = 4096                # 上下文窗口大小
     dml_pad_to = 30             # 开启 DirectML 加速时，短音频统一填充到指定长度，有加速效果
