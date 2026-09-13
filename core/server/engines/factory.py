@@ -21,6 +21,12 @@ class EngineFactory:
 
     @staticmethod
     def _load_sensevoice():
+        if ModelPaths.sensevoice_sherpa_model.exists():
+            from .sensevoice_sherpa import SenseVoiceSherpaEngine, SenseVoiceSherpaConfig
+            class Args:
+                model = str(ModelPaths.sensevoice_sherpa_model)
+                tokens = str(ModelPaths.sensevoice_sherpa_tokens)
+            return SenseVoiceSherpaEngine, SenseVoiceSherpaConfig, Args
         from .sensevoice_onnx.asr_engine import SenseVoiceEngine, SenseVoiceConfig
         return SenseVoiceEngine, SenseVoiceConfig, SenseVoiceArgs
 

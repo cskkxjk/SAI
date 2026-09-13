@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import sounddevice as sd
+from config_client import ClientConfig as Config
+from core.audio_devices import resolve_input_device
 
 from core.client.state import console
 from . import logger
@@ -112,27 +114,25 @@ class AudioStreamManager:
 
         # 检测音频设备
         try:
-            device = sd.query_devices(kind='input')
+            selected = resolve_input_device(Config.audio_device)
+            device = sd.query_devices(selected, kind='input')
             self._channels = min(2, device['max_input_channels'])
             device_name = device.get('name', '未知设备')
             console.print(
-                f'使用默认音频设备：[italic]{device_name}，声道数：{self._channels}',
+                f'使用音频设备：[italic]{device_name}，声道数：{self._channels}',
                 end='\n\n'
             )
-            logger.info(f"找到音频设备: {device_name}, 声道数: {self._channels}")
-        except UnicodeDecodeError:
-            logger.warning("无法获取音频设备名称（编码问题）")
-        except sd.PortAudioError:
-            logger.error("未找到麦克风设备")
-            input('按回车键退出')
-            sys.exit(1)
+            logger.info(f"找到音频设备: {device_name}, 声道数: {self._channels}, 选择值: {selected or '默认'}")
+        except (ValueError, sd.PortAudioError, UnicodeDecodeError) as exc:
+            logger.error("无法打开所选麦克风: %s", exc)
+            raise RuntimeError(f"无法打开所选录音设备，请重新选择麦克风：{exc}") from exc
 
         # 创建音频流
         try:
             stream = sd.InputStream(
                 samplerate=self.SAMPLE_RATE,
                 blocksize=int(self.BLOCK_DURATION * self.SAMPLE_RATE),
-                device=None,
+                device=selected,
                 dtype="float32",
                 channels=self._channels,
                 callback=self._audio_callback,

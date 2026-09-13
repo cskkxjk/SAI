@@ -1,4 +1,5 @@
 import os
+import json
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -7,6 +8,15 @@ __version__ = '2.6'
 
 # 项目根目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_GUI_CONFIG = Path(BASE_DIR) / 'config_gui.json'
+
+
+def _gui_value(name, default):
+    try:
+        with _GUI_CONFIG.open('r', encoding='utf-8') as f:
+            return json.load(f).get(name, default)
+    except (OSError, ValueError, TypeError):
+        return default
 
 
 # 客户端配置
@@ -30,11 +40,19 @@ class ClientConfig:
             'hold_mode': True,
             'enabled': True
         },
+        {
+            'key': 'f8',
+            'type': 'keyboard',
+            'suppress': True,
+            'hold_mode': False,
+            'enabled': True
+        },
     ]
 
-    threshold    = 0.3          # 快捷键触发阈值（秒）
+    threshold    = _gui_value('threshold', 0.3)
+    audio_device = _gui_value('audio_device', None)
 
-    paste        = False        # 是否以写入剪切板然后模拟 Ctrl-V 粘贴的方式输出结果
+    paste        = _gui_value('paste', False)
     restore_clip = True         # 模拟粘贴后是否恢复剪贴板
     paste_apps   = ['WeiXin.exe', 'Telegram.exe']  # 匹配时强制粘贴
 
@@ -43,8 +61,8 @@ class ClientConfig:
     save_audio = True           # 是否保存录音文件
     audio_name_len = 20         # 将录音识别结果的前多少个字存储到录音文件名中，建议不要超过200
     
-    context = ''                # 提示词上下文，用于辅助 Fun-ASR-Nano 模型识别（例如输入人名、地名、专业术语等）
-    language = 'auto'           # 识别语言：'auto', 'chinese', 'english', 'japanese' 等（各引擎支持范围不同）
+    context = _gui_value('context', '')
+    language = _gui_value('language', 'auto')
 
     trash_punc = '，。,.'       # 识别结果要消除的末尾标点
     trash_punc_thresh = 8       # 识别结果的单词数量低于阈值时，强制去除末尾标点
@@ -61,7 +79,7 @@ class ClientConfig:
     llm_enabled = True          # 是否启用 LLM 润色功能，需要配置 LLM/ 目录下的角色文件
     llm_stop_key = 'esc'        # 中断 LLM 输出的快捷键
 
-    enable_tray = True          # 客户端默认启用托盘图标功能
+    enable_tray = _gui_value('child_tray', True)
 
     # 日志配置
     log_level = 'DEBUG'          # 日志级别：'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
@@ -130,4 +148,3 @@ r"""
   {'key': 'f12', 'type': 'keyboard', 'suppress': True, 'hold_mode': True, 'enabled': True}, 
   {'key': 'x2', 'type': 'mouse', 'suppress': True, 'hold_mode': True, 'enabled': True}, 
 """
-

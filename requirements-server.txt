@@ -9,6 +9,8 @@ rich
 websockets
 watchdog
 pypinyin
+srt
+soundfile
 
 # tray and image
 pystray

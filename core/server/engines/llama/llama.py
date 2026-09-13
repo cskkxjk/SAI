@@ -432,6 +432,11 @@ class LlamaModel:
     """模型的面向对象封装"""
     def __init__(self, path, n_gpu_layers=-1, use_gpu=1):
         self.ptr = self.load_model(path, n_gpu_layers=n_gpu_layers, use_gpu=use_gpu)
+        if not self.ptr and use_gpu:
+            logger.warning("GPU model load failed, retrying on CPU: %s", path)
+            self.ptr = self.load_model(path, n_gpu_layers=0, use_gpu=False)
+        if not self.ptr:
+            raise RuntimeError(f"Cannot load GGUF model: {path}; check llama backend DLLs")
             
         self.vocab = llama_model_get_vocab(self.ptr)
         self.n_embd = llama_model_n_embd(self.ptr)
@@ -456,6 +461,7 @@ class LlamaModel:
         model_params.n_gpu_layers = n_gpu_layers
         if not use_gpu:
             model_params.devices = (ctypes.c_void_p * 1)(None)
+            model_params.n_gpu_layers = 0
         
         model = llama_model_load_from_file(
             model_path.as_posix().encode('utf-8'),

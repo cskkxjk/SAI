@@ -1,9 +1,8 @@
-import onnxruntime
 import numpy as np
 import base64
 import os
 import time
-from pathlib import Path
+from core.server.engines.onnx_session import OnnxSession
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Any, Optional
 from . import logger
@@ -75,33 +74,7 @@ class CTCDecoder:
 
 
     def _initialize_session(self):
-        session_opts = onnxruntime.SessionOptions()
-        session_opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
-        session_opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
-        session_opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-        # session_opts.enable_profiling = True
-        
-        available_providers = onnxruntime.get_available_providers()
-        providers = ['CPUExecutionProvider']
-        
-        if self.onnx_provider in ('TENSORRT', 'TRT') and 'TensorrtExecutionProvider' in available_providers:
-            providers.insert(0, ('TensorrtExecutionProvider', {
-                'trt_fp16_enable': True,
-                'trt_engine_cache_enable': True,
-                'trt_engine_cache_path': Path(self.model_path).parent / 'trt_cache',
-            }))
-        elif self.onnx_provider == 'DML' and 'DmlExecutionProvider' in available_providers:
-            providers.insert(0, 'DmlExecutionProvider') 
-        elif self.onnx_provider == 'CUDA' and 'CUDAExecutionProvider' in available_providers:
-            providers.insert(0, 'CUDAExecutionProvider')
-            
-        logger.info(f"[CTC] 加载模型: {os.path.basename(self.model_path)} (Providers: {providers})")
-        
-        self.sess = onnxruntime.InferenceSession(
-            self.model_path, 
-            sess_options=session_opts, 
-            providers=providers
-        )
+        self.sess = OnnxSession(self.model_path, self.onnx_provider)
         
         # 检测模型输入精度
         in_type = self.sess.get_inputs()[0].type
@@ -122,6 +95,7 @@ class CTCDecoder:
             self.blank_id = max(self.id2token.keys()) if self.id2token else 0
             
     def update_hotwords(self, hotwords: List[str]):
+        hotwords = hotwords or []
         """动态更新热词列表"""
         self.corrector.update_hotwords(hotwords)
         self.radar.update_hotwords(hotwords)
@@ -197,8 +171,23 @@ class CTCDecoder:
 
     def _infer(self, enc_output: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """阶段 1: ONNX 推理，返回 (topk_log_probs, topk_indices)"""
-        outputs = self.sess.run(None, {"enc_output": enc_output})
-        return outputs[0], outputs[1]
+        outputs = self.sess.run(None, {
+            "enc_output": enc_output.astype(self.input_dtype, copy=False),
+        })
+        if len(outputs) == 2:
+            return outputs[0], outputs[1]
+        if len(outputs) != 1 or outputs[0].ndim != 3:
+            raise ValueError("Unsupported Fun-ASR CTC output schema")
+        # Earlier exports return logits rather than the precomputed top-30.
+        logits = outputs[0].astype(np.float32)
+        shifted = logits - logits.max(axis=-1, keepdims=True)
+        log_probs = shifted - np.log(np.exp(shifted).sum(axis=-1, keepdims=True))
+        k = min(30, logits.shape[-1])
+        indices = np.argpartition(-log_probs, k - 1, axis=-1)[..., :k]
+        scores = np.take_along_axis(log_probs, indices, axis=-1)
+        order = np.argsort(-scores, axis=-1)
+        return (np.take_along_axis(scores, order, axis=-1),
+                np.take_along_axis(indices, order, axis=-1).astype(np.int32))
 
     def _greedy_decode(self, top1_indices: np.ndarray) -> Tuple[str, List[Token]]:
         """阶段 2: 基于 Top-1 Index 的贪婪解码"""
@@ -305,4 +294,3 @@ def decode_ctc_indices(indices, id2token):
         "loop": t_loop
     }
     return full_text, results, timings
-

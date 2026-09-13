@@ -1,5 +1,7 @@
 # coding: utf-8
 import asyncio
+import os
+from pathlib import Path
 from . import logger
 from ..ui import TipsDisplay
 from config_client import ClientConfig as Config, __version__
@@ -34,7 +36,8 @@ class MicRunner:
         TipsDisplay.show_mic_tips()
 
         # 3. 开启运行组件 (音频流、快捷键监听)
-        self.app.stream.start()
+        if self.app.stream.start() is None:
+            raise RuntimeError("Cannot open microphone; see client_latest.log")
         self.app.shortcut.start()
         
         # 4. 开启 UDP 控制 (如果启用)
@@ -54,6 +57,14 @@ class MicRunner:
         
         # 1. 资源启动
         self.start_resources()
+        if os.environ.get("CAPSWRITER_READY_FILE"):
+            for _ in range(30):
+                if await self.ws_manager.connect():
+                    Path(os.environ["CAPSWRITER_READY_FILE"]).touch()
+                    break
+                await asyncio.sleep(1)
+            else:
+                raise RuntimeError("无法连接识别服务，请查看 client_latest.log")
         
         # 2. 启动核心处理器 (内部处理连接与循环)
         
@@ -61,4 +72,3 @@ class MicRunner:
         self.processor = ResultProcessor(self.app)
         await self.processor.start()
             
-

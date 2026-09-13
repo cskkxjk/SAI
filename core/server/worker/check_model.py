@@ -5,6 +5,7 @@
 检查配置的语音模型文件是否存在，如果不存在则提供下载链接。
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -43,6 +44,9 @@ def check_model() -> None:
             ModelPaths.sensevoice_decoder,
             ModelPaths.sensevoice_tokenizer,
         ]
+        if ModelPaths.sensevoice_sherpa_model.exists():
+            required_files = [ModelPaths.sensevoice_sherpa_model,
+                              ModelPaths.sensevoice_sherpa_tokens]
     elif model_type == 'paraformer':
         model_dir = ModelPaths.paraformer_dir
         required_files = [
@@ -69,7 +73,8 @@ def check_model() -> None:
     - 'qwen_asr'
 
         ''', style='bright_red')
-        input('按回车退出')
+        if not os.environ.get('CAPSWRITER_GUI'):
+            input('按回车退出')
         sys.exit(1)
 
     # 检查所有必需的文件
@@ -101,7 +106,8 @@ def check_model() -> None:
         error_msg += '\n'
         
         logger.error(error_msg)
-        input('按回车退出')
+        if not os.environ.get('CAPSWRITER_GUI'):
+            input('按回车退出')
         sys.exit(1)
 
     # 所有必需文件检查通过

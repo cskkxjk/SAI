@@ -6,12 +6,15 @@
 """
 
 from pynput import keyboard
-from pynput._util.win32 import KeyTranslator
 from . import logger
 
 
 # 创建键盘翻译器实例（用于 VK 到字符的转换）
-_key_translator = KeyTranslator()
+if __import__('sys').platform == 'win32':
+    from pynput._util.win32 import KeyTranslator
+    _key_translator = KeyTranslator()
+else:
+    _key_translator = None
 
 # 特殊键 VK 映射（从 pynput 复制）
 _SPECIAL_KEYS = {
@@ -87,6 +90,17 @@ class KeyMapper:
         Returns:
             str: 按键名称（与 Shortcut.key 格式一致）
         """
+        # Windows 的锁定键在部分键盘驱动/输入法环境下不会稳定出现在
+        # pynput 的枚举映射中，显式保留标准虚拟键码，避免 CapsLock
+        # 被误识别成未知键而导致快捷键完全没有响应。
+        windows_lock_keys = {
+            0x14: 'caps_lock',
+            0x90: 'num_lock',
+            0x91: 'scroll_lock',
+        }
+        if vk in windows_lock_keys:
+            return windows_lock_keys[vk]
+
         # 首先检查是否是特殊键（pynput Key 枚举）
         if vk in _SPECIAL_KEYS:
             return _SPECIAL_KEYS[vk].name
@@ -97,6 +111,8 @@ class KeyMapper:
 
         # 使用 pynput 的 KeyTranslator 获取字符（字母、数字、符号键）
         try:
+            if _key_translator is None:
+                return f'vk_{vk}'
             params = _key_translator(vk, is_press=True)
             if 'char' in params and params['char'] is not None:
                 return params['char']

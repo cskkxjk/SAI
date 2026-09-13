@@ -8,6 +8,8 @@ WebSocket 管理器 (SocketManager)
 
 import asyncio
 import functools
+import os
+from pathlib import Path
 import websockets
 from config_server import ServerConfig as Config
 from .ws_recv import ws_recv
@@ -45,8 +47,7 @@ class SocketManager:
         
         # 0. 启动前自检环境
         if not self._check_port():
-            input("\n按回车键退出...")
-            return 
+            raise RuntimeError(f"Server port {Config.port} is already in use")
 
         self._is_running = True
 
@@ -73,6 +74,8 @@ class SocketManager:
 
             # 4. 进入识别结果发送循环 (作为主阻塞任务)
             logger.info("WebSocket 发送协程已就绪")
+            if os.environ.get("CAPSWRITER_READY_FILE"):
+                Path(os.environ["CAPSWRITER_READY_FILE"]).touch()
             await ws_send(self.app)
             
         self._is_running = False

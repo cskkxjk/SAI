@@ -1,9 +1,32 @@
 # coding=utf-8
 import os
+import json
+import logging
 import time
 from pathlib import Path
 import numpy as np
-import onnxruntime as ort
+from ...onnx_session import OnnxSession
+
+
+def encoder_provider(path, requested):
+    """The distributed INT4 encoder produces incorrect results on DirectML."""
+    if requested.upper() != "DML":
+        return requested
+    path = Path(path)
+    quantized = ".int4." in path.name.lower()
+    try:
+        manifest = json.loads((path.parent / "model-source.json").read_text("utf-8"))
+        quantized = quantized or any(
+            item.get("target") == path.name and ".int4." in item.get("source", "").lower()
+            for item in manifest.get("files", [])
+        )
+    except (OSError, ValueError, TypeError):
+        pass
+    if quantized:
+        logging.getLogger("server").warning(
+            "[Qwen] INT4 encoder uses CPU for accuracy; GGUF GPU setting is unchanged.")
+        return "CPU"
+    return requested
 
 
 class FastWhisperMel:
@@ -121,42 +144,21 @@ class QwenAudioEncoder:
     """Qwen3 音频编码器 (Split Frontend + Backend)"""
     def __init__(self, frontend_path: str, backend_path: str, onnx_provider: str = 'CPU', dml_pad_to: int = 30, verbose: bool = True):
         self.verbose = verbose
-        self.onnx_provider = onnx_provider.upper()
+        self.onnx_provider = encoder_provider(backend_path, onnx_provider.upper())
         self.active_dml = False
         self.dml_pad_to = dml_pad_to
         # 预计算目标长度：每 1 秒对应 13 帧 hidden_states
         self.h_target_len = self.dml_pad_to * 13
         
-        # 初始化 ONNX Session Options
-        sess_opts = ort.SessionOptions()
-        sess_opts.log_severity_level = 3
-        sess_opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
-        sess_opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
-        sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        
-        available_providers = ort.get_available_providers()
-        providers = ['CPUExecutionProvider']
-        
-        if self.onnx_provider in ('TRT', 'TENSORRT') and 'TensorrtExecutionProvider' in available_providers:
-            providers.insert(0, ('TensorrtExecutionProvider', {
-                'trt_fp16_enable': True,
-                'trt_engine_cache_enable': True,
-                'trt_engine_cache_path': Path(backend_path).parent / 'trt_cache',
-            }))
-        elif self.onnx_provider == 'DML' and 'DmlExecutionProvider' in available_providers:
-            providers.insert(0, 'DmlExecutionProvider') 
-            self.active_dml = True
-        elif self.onnx_provider == 'CUDA' and 'CUDAExecutionProvider' in available_providers:
-            providers.insert(0, 'CUDAExecutionProvider')
-            
         if self.verbose: 
-            print(f"--- [Encoder] 加载 Split ONNX 模型 (Provider: {providers[0]}, Pad: {dml_pad_to}s) ---")
+            print(f"--- [Encoder] 加载 Split ONNX 模型 (Provider: {self.onnx_provider}, Pad: {dml_pad_to}s) ---")
             print(f"    Frontend: {os.path.basename(frontend_path)}")
             print(f"    Backend:  {os.path.basename(backend_path)}")
 
         # 加载两个 Session
-        self.sess_fe = ort.InferenceSession(frontend_path, sess_options=sess_opts, providers=providers)
-        self.sess_be = ort.InferenceSession(backend_path, sess_options=sess_opts, providers=providers)
+        self.sess_fe = OnnxSession(frontend_path, self.onnx_provider)
+        self.sess_be = OnnxSession(backend_path, self.onnx_provider)
+        self.active_dml = self.sess_be.get_providers()[0] == "DmlExecutionProvider"
         
         self.mel_extractor = FastWhisperMel()
         
@@ -234,6 +236,7 @@ class QwenAudioEncoder:
             "hidden_states": hidden_input,
             "attention_mask": mask
         })[0]
+        self.active_dml = self.sess_be.get_providers()[0] == "DmlExecutionProvider"
         
         # 3. 截断输出 -> (Batch, seq_len, D)
         if audio_embd.shape[1] > seq_len:

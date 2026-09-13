@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 
 # 版本信息
@@ -6,6 +7,32 @@ __version__ = '2.6'
 
 # 项目根目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_GUI_CONFIG = Path(BASE_DIR) / 'config_gui.json'
+
+
+def _gui_value(name, default):
+    try:
+        with _GUI_CONFIG.open('r', encoding='utf-8') as f:
+            return json.load(f).get(name, default)
+    except (OSError, ValueError, TypeError):
+        return default
+
+
+def _resolve_onnx_provider():
+    """Prefer a usable GPU execution provider and fall back to CPU."""
+    requested = str(_gui_value('onnx_provider', 'AUTO')).upper()
+    if requested in ('CPU', 'DML', 'CUDA'):
+        return requested
+    try:
+        import onnxruntime as ort
+        providers = ort.get_available_providers()
+        if 'CUDAExecutionProvider' in providers:
+            return 'CUDA'
+        if 'DmlExecutionProvider' in providers:
+            return 'DML'
+    except Exception:
+        pass
+    return 'CPU'
 
 
 # 服务端配置
@@ -14,12 +41,12 @@ class ServerConfig:
     port = '6016'
 
     # 语音模型选择：'qwen_asr', 'fun_asr_nano', 'sensevoice', 'paraformer'
-    model_type = 'qwen_asr'
+    model_type = _gui_value('model_type', 'qwen_asr')
 
     format_num = True       # 输出时是否将中文数字转为阿拉伯数字
     format_spell = True     # 输出时是否调整中英之间的空格
 
-    enable_tray = True        # 是否启用托盘图标功能
+    enable_tray = _gui_value('child_tray', True)
     hotwords_path = Path() / 'hot-server.txt' # 全局热词配置文件路径
 
     # 日志配置
@@ -27,7 +54,7 @@ class ServerConfig:
     aligner_idle_timeout = 10  # 对齐引擎空闲多少秒后自动释放显存 (0 表示不释放)
 
     # GPU 预加速配置（有识别任务时，提前调高显存频率，降低延迟，需管理员权限运行）
-    gpu_boost_enabled = False                   # 总开关，默认关闭
+    gpu_boost_enabled = _gui_value('gpu_boost_enabled', False)
     gpu_boost_cmd = 'nvidia-smi -lmc 9000'      # GPU 预加速命令，锁定显存频率到9000MHz（根据实际 GPU 调整）
     gpu_unboost_cmd = 'nvidia-smi -rmc'         # GPU 取消预加速命令，恢复显存到默认频率
     gpu_unboost_timeout = 1                     # 空闲多少秒后取消加速
@@ -64,14 +91,16 @@ class ModelPaths:
     sensevoice_encoder = sensevoice_dir / 'SenseVoice-Encoder.fp16.onnx'
     sensevoice_decoder = sensevoice_dir / 'SenseVoice-CTC.fp16.onnx'
     sensevoice_tokenizer = sensevoice_dir / 'tokenizer.bpe.model'
+    sensevoice_sherpa_model = model_dir / 'SenseVoice-Small/Sherpa-ONNX/model.int8.onnx'
+    sensevoice_sherpa_tokens = model_dir / 'SenseVoice-Small/Sherpa-ONNX/tokens.txt'
 
 
     # Fun-ASR-Nano 模型路径，自带标点
     fun_asr_nano_gguf_dir = model_dir / 'Fun-ASR-Nano' / 'Fun-ASR-Nano-GGUF'
-    fun_asr_nano_gguf_encoder_adaptor = fun_asr_nano_gguf_dir / 'Fun-ASR-Nano-Encoder-Adaptor.fp16.onnx'
-    fun_asr_nano_gguf_ctc = fun_asr_nano_gguf_dir / 'Fun-ASR-Nano-CTC.fp16.onnx'
-    fun_asr_nano_gguf_llm_decode = fun_asr_nano_gguf_dir / 'Fun-ASR-Nano-Decoder.q5_k.gguf'
-    fun_asr_nano_gguf_token = fun_asr_nano_gguf_dir / 'tokens.txt'
+    fun_asr_nano_gguf_encoder_adaptor = fun_asr_nano_gguf_dir / 'model/Fun-ASR-Nano-Encoder-Adaptor.fp32.onnx'
+    fun_asr_nano_gguf_ctc = fun_asr_nano_gguf_dir / 'model/Fun-ASR-Nano-CTC.int8.onnx'
+    fun_asr_nano_gguf_llm_decode = fun_asr_nano_gguf_dir / 'model/Fun-ASR-Nano-Decoder.q8_0.gguf'
+    fun_asr_nano_gguf_token = fun_asr_nano_gguf_dir / 'model/tokens.txt'
     fun_asr_nano_gguf_hotwords = Path() / 'hot-server.txt'
 
     # Qwen3-ASR 模型路径，自带标点
@@ -108,7 +137,7 @@ class SenseVoiceArgs:
     decoder_path = ModelPaths.sensevoice_decoder.as_posix()
     tokenizer_path = ModelPaths.sensevoice_tokenizer.as_posix()
     itn = True                  # 原生输出阿拉伯数字
-    onnx_provider = 'CPU'       # ONNX 推理后端 (CPU, DML)
+    onnx_provider = _resolve_onnx_provider()
     top_k = 8                   # 热词检索的 CTC 空间大小
     dml_pad_to = 30             # 开启 DirectML 加速时，短音频统一填充到指定长度，有加速效果
 
@@ -123,8 +152,8 @@ class FunASRNanoGGUFArgs:
     tokens_path = ModelPaths.fun_asr_nano_gguf_token.as_posix()
 
     # 显卡加速
-    onnx_provider = 'CPU'       # ONNX 推理后端 (CPU, DML)
-    llm_use_gpu = True          # 是否启用 GPU 加速 GGUF 模型
+    onnx_provider = _resolve_onnx_provider()
+    llm_use_gpu = _gui_value('llm_use_gpu', True)
     vulkan_force_fp32 = False   # 是否强制 FP32 计算（如果 GPU 是 Intel 集显且出现精度溢出，可设为 True）
     
     # 模型细节
@@ -146,8 +175,8 @@ class Qwen3ASRGGUFArgs:
     llm_fn = ModelPaths.qwen3_asr_gguf_llm_decode.name
 
     # 显卡加速
-    onnx_provider = 'CPU'       # ONNX 推理后端 (CPU, DML)
-    llm_use_gpu = True          # 是否启用 GPU 加速 GGUF 模型
+    onnx_provider = _resolve_onnx_provider()
+    llm_use_gpu = _gui_value('llm_use_gpu', True)
     
     # 模型细节
     n_ctx = 2048                # 上下文窗口大小
@@ -173,4 +202,3 @@ class ForceAlignerGGUFArgs:
     # 对齐细节
     n_ctx = 3072                # 上下文窗口大小
     dml_pad_to = 30             # 开启 DirectML 加速时，短音频统一填充到指定长度，有加速效果
-

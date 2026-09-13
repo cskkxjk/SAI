@@ -1,8 +1,5 @@
-import onnxruntime
-import time
-import os
 import numpy as np
-from pathlib import Path 
+from core.server.engines.onnx_session import OnnxSession
 from . import logger
 
 class FunASRMelExtractor:
@@ -85,46 +82,42 @@ class AudioEncoder:
         self.sess = None
         self.preprocessor = FunASRMelExtractor()
         self.input_dtype = np.float32
+        self._raw_audio_input = False
         self._initialize_session()
 
     def _initialize_session(self):
-        session_opts = onnxruntime.SessionOptions()
-        session_opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
-        session_opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
-        session_opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-        
-        available_providers = onnxruntime.get_available_providers()
-        providers = ['CPUExecutionProvider']
-        
-        if self.onnx_provider in ('TRT', 'TENSORRT') and 'TensorrtExecutionProvider' in available_providers:
-            providers.insert(0, ('TensorrtExecutionProvider', {
-                'trt_fp16_enable': True,
-                'trt_engine_cache_enable': True,
-                'trt_engine_cache_path': Path(self.model_path).parent / 'trt_cache',
-            }))
-        elif self.onnx_provider == 'DML' and 'DmlExecutionProvider' in available_providers:
-            providers.insert(0, 'DmlExecutionProvider')
-        elif self.onnx_provider == 'CUDA' and 'CUDAExecutionProvider' in available_providers:
-            providers.insert(0, 'CUDAExecutionProvider')
-        
-        logger.info(f"[Encoder] 加载模型: {os.path.basename(self.model_path)} (Providers: {providers})")
-        
-        self.sess = onnxruntime.InferenceSession(
-            self.model_path, 
-            sess_options=session_opts, 
-            providers=providers
-        )
+        self.sess = OnnxSession(self.model_path, self.onnx_provider)
         
         # 检测模型输入精度
         in_type = self.sess.get_inputs()[0].type
         self.input_dtype = np.float16 if 'float16' in in_type else np.float32
+        input_names = {item.name for item in self.sess.get_inputs()}
+        # ModelScope also hosts the earlier raw-waveform export.
+        self._raw_audio_input = input_names == {'audio'}
+        if not self._raw_audio_input and input_names != {'lfr_feat', 'mask'}:
+            raise ValueError(f"Unsupported Fun-ASR encoder inputs: {input_names}")
+        logger.info(
+            "[Encoder] 输入接口: %s",
+            "raw audio" if self._raw_audio_input else "lfr_feat + mask",
+        )
         
-        # 自动热身
         self.warmup()
 
     def warmup(self):
         """执行热身，确保 DML 算子已编译"""
         if self.dml_pad_to <= 0:
+            return
+
+        if self._raw_audio_input:
+            warmup_samples = max(16000, int(self.dml_pad_to * 16000))
+            dummy_audio = np.zeros(
+                (1, 1, warmup_samples), dtype=self.input_dtype
+            )
+            logger.info(
+                "[Encoder] 正在预热 (原始音频固定形状: %ss)...",
+                self.dml_pad_to,
+            )
+            self.sess.run(None, {'audio': dummy_audio})
             return
             
         target_t_lfr = int((self.dml_pad_to * 100 + 5) // 6) + 1
@@ -136,6 +129,14 @@ class AudioEncoder:
 
     def encode(self, audio: np.ndarray) -> tuple:
         """执行编码，返回 (audio_embeddings, encoder_output)"""
+        if self._raw_audio_input:
+            raw_audio = np.asarray(audio, dtype=self.input_dtype).reshape(1, 1, -1)
+            outputs = self.sess.run(None, {'audio': raw_audio})
+            enc_output = outputs[0]
+            adaptor_raw = outputs[1]
+            audio_embd = adaptor_raw[0].astype(np.float32)
+            return audio_embd, enc_output
+
         # 1. 预处理
         lfr_feat = self.preprocessor.extract(audio)
         actual_t_lfr = lfr_feat.shape[0]

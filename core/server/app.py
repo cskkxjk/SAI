@@ -102,9 +102,12 @@ class CapsWriterServer:
 
         # 拉起识别子进程
         self.process_manager.start()
+        if not self.is_alive:
+            raise RuntimeError("ASR worker failed to initialize; see server_latest.log")
         
         # 开启网络服务监听 (接管当前线程直至退出)
         try:
             self.loop.run_until_complete(self.socket_manager.start()) 
         except RuntimeError:
-            pass
+            if self.is_alive:
+                raise

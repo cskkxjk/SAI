@@ -126,6 +126,22 @@ class ShortcutManager:
 
         return win32_event_filter
 
+    def _keyboard_press(self, key):
+        key_name = self._key_to_name(key)
+        if key_name in self.tasks:
+            self._event_handler.handle_keydown(key_name, self.tasks[key_name])
+
+    def _keyboard_release(self, key):
+        key_name = self._key_to_name(key)
+        if key_name in self.tasks:
+            self._event_handler.handle_keyup(key_name, self.tasks[key_name])
+
+    @staticmethod
+    def _key_to_name(key) -> str:
+        if isinstance(key, keyboard.Key):
+            return key.name
+        return getattr(key, 'char', None) or str(key).replace("'", "").lower()
+
     def create_mouse_filter(self):
         """创建鼠标事件过滤器"""
         def win32_event_filter(msg, data):
@@ -258,9 +274,15 @@ class ShortcutManager:
             if self.keyboard_listener and self.keyboard_listener.is_alive():
                 logger.debug("键盘监听器已在运行，跳过启动")
             else:
-                self.keyboard_listener = keyboard.Listener(
-                    win32_event_filter=self.create_keyboard_filter()
-                )
+                if __import__('sys').platform == 'win32':
+                    self.keyboard_listener = keyboard.Listener(
+                        win32_event_filter=self.create_keyboard_filter()
+                    )
+                else:
+                    self.keyboard_listener = keyboard.Listener(
+                        on_press=self._keyboard_press,
+                        on_release=self._keyboard_release,
+                    )
                 self.keyboard_listener.start()
                 logger.info("键盘监听器已启动")
 
@@ -268,9 +290,14 @@ class ShortcutManager:
             if self.mouse_listener and self.mouse_listener.is_alive():
                 logger.debug("鼠标监听器已在运行，跳过启动")
             else:
-                self.mouse_listener = mouse.Listener(
-                    win32_event_filter=self.create_mouse_filter()
-                )
+                if __import__('sys').platform == 'win32':
+                    self.mouse_listener = mouse.Listener(
+                        win32_event_filter=self.create_mouse_filter()
+                    )
+                else:
+                    self.mouse_listener = mouse.Listener(
+                        on_click=self._mouse_click
+                    )
                 self.mouse_listener.start()
                 logger.info("鼠标监听器已启动")
 
@@ -280,6 +307,16 @@ class ShortcutManager:
                 mode = "长按" if shortcut.hold_mode else "单击"
                 toggle = "可恢复" if shortcut.is_toggle_key() else "普通键"
                 logger.info(f"  [{shortcut.key}] {mode}模式, 阻塞:{shortcut.suppress}, {toggle}")
+
+    def _mouse_click(self, x, y, button, pressed):
+        button_name = getattr(button, 'name', '')
+        if button_name not in self.tasks:
+            return
+        task = self.tasks[button_name]
+        if pressed:
+            self._event_handler.handle_keydown(button_name, task)
+        else:
+            self._handle_mouse_keyup(button_name, task)
 
     def stop(self) -> None:
         """停止所有监听器和清理资源"""
