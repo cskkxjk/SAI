@@ -67,23 +67,25 @@ def merge_tokens_by_sequence_matcher(
 
     match_pos_prev, match_pos_new, match_len = best
 
-    # 3. 将字符位置映射回 token 索引
-    prev_cut = _char_pos_to_token_idx(
-        prev_tokens, len(prev_tokens) - prev_tail_len,
-        match_pos_prev + match_len  # prev 保留到匹配终点
+    # 3. 在匹配终点处按字符位置切开两侧
+    #    切点可能落在某个 token 内部（例如对齐器把 "? " 当成一个 token），
+    #    此时必须把该 token 拆开：前缀归 prev、剩余部分归 new，不能整 token 丢弃
+    prev_head, prev_head_ts, _, _ = _cut_at_char(
+        prev_tokens, prev_timestamps,
+        len(prev_tokens) - prev_tail_len, match_pos_prev + match_len
     )
-    new_start = _char_pos_to_token_idx(
-        new_tokens, 0,
-        match_pos_new + match_len  # new 从匹配终点之后开始
+    _, _, new_tail, new_tail_ts = _cut_at_char(
+        new_tokens, new_global_timestamps,
+        0, match_pos_new + match_len
     )
 
     # 4. 执行拼接
-    result_tokens = prev_tokens[:prev_cut] + new_tokens[new_start:]
-    result_timestamps = prev_timestamps[:prev_cut] + new_global_timestamps[new_start:]
+    result_tokens = prev_head + new_tail
+    result_timestamps = prev_head_ts + new_tail_ts
 
     logger.debug(
         f"Token 拼接: 匹配长度 {match_len}, "
-        f"prev 截断 token[{prev_cut}], new 起始 token[{new_start}]"
+        f"prev 保留 {len(prev_head)} token, new 追加 {len(new_tail)} token"
     )
 
     # 5. 后处理：清理连续重复标点
@@ -118,18 +120,35 @@ def _find_best_token_overlap(prev_tail: str, new_head: str) -> tuple[int, int, i
     return max(candidates, key=score)
 
 
-def _char_pos_to_token_idx(tokens: List[str], base_offset: int, char_pos: int) -> int:
+def _cut_at_char(
+    tokens: List[str], timestamps: List[float], base_offset: int, char_pos: int
+) -> Tuple[List[str], List[float], List[str], List[float]]:
     """
-    将字符位置映射回 token 索引（全局）。
+    在 tokens 的第 char_pos 个字符处切开（从 base_offset 起计字符）。
 
-    从 base_offset 开始累计字符数，找到 >= char_pos 的 token 边界。
+    返回 (前缀 tokens, 前缀时间戳, 后缀 tokens, 后缀时间戳)。前缀始终含
+    tokens[:base_offset]。若切点落在某个 token 内部，则按字符拆开该 token：
+    前缀收下它的前半，后缀以它的后半开头（时间戳沿用原 token）。整 token
+    对齐会丢字符，所以这里必须按字符切。
     """
-    char_count = 0
-    for i in range(base_offset, len(tokens)):
-        if char_count >= char_pos:
-            return i
-        char_count += len(tokens[i])
-    return len(tokens)
+    i = base_offset
+    consumed = 0
+    while i < len(tokens) and consumed + len(tokens[i]) <= char_pos:
+        consumed += len(tokens[i])
+        i += 1
+
+    head_tokens = list(tokens[:i])
+    head_ts = list(timestamps[:i])
+    tail_tokens = list(tokens[i:])
+    tail_ts = list(timestamps[i:])
+
+    if i < len(tokens) and consumed < char_pos:
+        split = char_pos - consumed
+        head_tokens.append(tokens[i][:split])
+        head_ts.append(timestamps[i])
+        tail_tokens[0] = tokens[i][split:]
+
+    return head_tokens, head_ts, tail_tokens, tail_ts
 
 
 def _fallback_merge(
@@ -165,3 +184,26 @@ def _clean_repeated_punct(
         clean_tokens.append(token)
         clean_timestamps.append(ts)
     return clean_tokens, clean_timestamps
+
+
+if __name__ == "__main__":
+    # 回归：上一位分片以单独的 '?' 收尾，本分片把 '? ' 当成一个 token。
+    # 切点落在 '? ' 中间时不能整 token 丢弃，否则 "? Just" 的空格会消失。
+    tail = ['hairpiece', '?', ' ', 'Wait', ',', ' ', 'does', ' ',
+            'he', ' ', 'eat', ' ', 'chalk', '?']
+    new_tokens = ['Wait', ',', ' ', 'does', ' ', 'he', ' ', 'eat', ' ',
+                  'chalk', '? ', 'Just', ' ', "'", 'cause', ' ', 'I', ' ', 'don', "'", 't']
+    new_ts = [60.0 + i * 0.1 for i in range(len(new_tokens))]
+
+    # 尾部长于 overlap 窗口时，前缀必须完整保留窗口之前的历史 token
+    for filler in ([], ['prior'] * 70):
+        prev_tokens = filler + tail
+        prev_ts = [float(i) for i in range(len(prev_tokens))]
+        tokens, _ = merge_tokens_by_sequence_matcher(
+            prev_tokens, prev_ts, new_tokens, new_ts, offset=60.0, overlap=4.0
+        )
+        text = "".join(tokens)
+        print(f"filler={len(filler)} → {text}")
+        assert prev_tokens[:len(filler)] == tokens[:len(filler)], "历史 token 丢失"
+        assert 'chalk? Just' in text, f"空格丢失: {text!r}"
+        assert tokens.count('chalk') == 1, f"chalk 重复: {tokens}"
