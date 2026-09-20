@@ -97,8 +97,8 @@ class Launcher(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("CapsWriter Offline")
-        self.geometry("780x710")
-        self.minsize(700, 690)
+        self.geometry("780x740")
+        self.minsize(700, 720)
         self.resizable(True, True)
         self.processes = []
         self.ready_files = {}
@@ -116,6 +116,7 @@ class Launcher(tk.Tk):
             "context": tk.StringVar(),
             "paste": tk.BooleanVar(value=False),
             "audio_device": tk.StringVar(value=DEFAULT_MIC),
+            "keep_microphone_open": tk.BooleanVar(value=False),
         }
         self.audio_devices = {DEFAULT_MIC: None}
         self.saved_audio_device = None
@@ -181,14 +182,35 @@ class Launcher(tk.Tk):
                         variable=self.vars["gpu_boost_enabled"]).pack(anchor="w", pady=5)
         ttk.Checkbutton(options, text="使用剪贴板粘贴输出",
                         variable=self.vars["paste"]).pack(anchor="w")
+        ttk.Checkbutton(options, text="快速响应（空闲时持续占用麦克风）",
+                        variable=self.vars["keep_microphone_open"]).pack(anchor="w", pady=(5, 0))
         ttk.Label(outer, textvariable=self.status, foreground="#187a3d",
                   wraplength=640).pack(anchor="w")
         buttons = ttk.Frame(outer)
         buttons.pack(fill="x", pady=(18, 0))
         ttk.Button(buttons, text="保存设置", command=self._save).pack(side="left")
+        ttk.Button(buttons, text="热词与替换", command=self._open_hotwords).pack(
+            side="left", padx=8)
         self.start_button = ttk.Button(buttons, text="保存并启动", command=self._start)
         self.start_button.pack(side="right")
         ttk.Button(buttons, text="停止", command=self._stop_processes).pack(side="right", padx=8)
+
+    def _open_hotwords(self):
+        editor = getattr(self, "_hotword_editor", None)
+        if editor is not None and editor.winfo_exists():
+            editor.deiconify()
+            editor.lift()
+            return
+        from core.desktop_hotwords import HotwordEditor
+        try:
+            # Read first so a permissions/encoding error cannot leave a partial window.
+            for name in ("hot.txt", "hot-rule.txt"):
+                path = ROOT / name
+                if path.exists():
+                    path.read_text(encoding="utf-8")
+            self._hotword_editor = HotwordEditor(self, ROOT)
+        except (OSError, UnicodeError) as exc:
+            messagebox.showerror("无法打开热词文件", str(exc), parent=self)
 
     def _update_model_info(self):
         info = MODEL_INFO.get(self._model_key())

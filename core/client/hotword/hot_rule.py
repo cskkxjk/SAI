@@ -23,6 +23,7 @@ corrector.correct('国内交流电一般是50赫兹')       # 输出：国内交
 import re
 from threading import Lock
 from typing import Dict
+from core.hotword_rules import parse_rules
 
 
 class RuleCorrector:
@@ -42,17 +43,10 @@ class RuleCorrector:
         Returns:
             加载的规则数量
         """
-        new_patterns = {}
-
-        for line in rule_text.splitlines():
-            if not line or line.startswith('#'):
-                continue
-
-            parts = line.split(' = ')
-            if len(parts) == 2:
-                pattern = parts[0].strip()
-                replacement = parts[1].strip().replace(r'\s', ' ')
-                new_patterns[pattern] = replacement
+        new_patterns = {
+            pattern.pattern: replacement
+            for pattern, replacement in parse_rules(rule_text, strict=False)
+        }
 
         with self._lock:
             self.patterns = new_patterns

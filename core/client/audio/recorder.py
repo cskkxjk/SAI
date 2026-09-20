@@ -94,6 +94,7 @@ class AudioRecorder:
             self._start_time = 0.0
             self._duration = 0.0
             self._cache = []
+            has_signal = False
             
             # 音频文件管理
             file_path = None
@@ -109,6 +110,10 @@ class AudioRecorder:
                     logger.debug(f"录音开始，时间戳: {self._start_time}")
                     
                 elif task['type'] == 'data':
+                    if not has_signal:
+                        if not np.any(task['data']):
+                            continue
+                        has_signal = True
                     # 在阈值之前积攒音频数据
                     if task['time'] - self._start_time < Config.threshold:
                         self._cache.append(task['data'])
@@ -125,6 +130,7 @@ class AudioRecorder:
                     
                     # 获取音频数据
                     if self._cache:
+                        self._cache.append(task['data'])
                         data = np.concatenate(self._cache)
                         self._cache.clear()
                     else:
@@ -152,12 +158,19 @@ class AudioRecorder:
                     asyncio.create_task(self._send_message(message))
                     
                 elif task['type'] == 'finish':
+                    if not has_signal:
+                        logger.info("本次录音没有采集到有效音频，跳过识别")
+                        break
                     # 如果有缓存的数据未发送，先发送缓存
                     if self._cache:
                         data = np.concatenate(self._cache)
                         self._cache.clear()
                         
                         self._duration += len(data) / 48000
+                        if Config.save_audio and self._file_manager and file_path is None:
+                            file_path, _ = self._file_manager.create(
+                                data.shape[1], self._start_time)
+                            self.state.register_audio_file(self.task_id, file_path)
                         if Config.save_audio and self._file_manager:
                             self._file_manager.write(data)
 
@@ -221,6 +234,9 @@ class AudioRecorder:
 
         except Exception as e:
             logger.error(f"录音任务错误: {e}", exc_info=True)
+        finally:
+            if self._file_manager:
+                self._file_manager.finish()
     
     def get_file_manager(self) -> Optional[AudioFileManager]:
         """获取当前的文件管理器"""

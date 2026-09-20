@@ -60,9 +60,11 @@ class RegressionTests(unittest.TestCase):
     def test_selected_microphone_is_used_by_stream(self):
         app = SimpleNamespace(state=SimpleNamespace(stream=None))
         manager = AudioStreamManager(app)
+        manager.keep_open = False
+        self.addCleanup(manager.shutdown)
         selected = {"index": 15, "name": "USB Mic", "hostapi": "WASAPI"}
         with patch.object(ClientConfig, "audio_device", selected), \
-             patch("core.client.audio.stream.resolve_input_device", return_value=15) as resolve, \
+             patch("core.client.audio.stream.resolve_capture_device", return_value=15) as resolve, \
              patch("core.client.audio.stream.sd.query_devices",
                    return_value={"max_input_channels": 2, "name": "USB Mic"}) as query, \
              patch("core.client.audio.stream.sd.InputStream") as stream:
@@ -121,6 +123,7 @@ class RegressionTests(unittest.TestCase):
     def test_capslock_hold_release_and_repeat(self):
         task = Mock()
         task.shortcut = SimpleNamespace(hold_mode=True, suppress=True)
+        task.pressed = False
         task.is_recording = False
         task.threshold = .3
         handler = ShortcutEventHandler({}, Mock(), Mock())
@@ -133,6 +136,34 @@ class RegressionTests(unittest.TestCase):
         with patch("core.client.shortcut.event_handler.time.time", return_value=11):
             handler.handle_keyup("caps_lock", task)
         task.finish.assert_called_once()
+
+    def test_capslock_failure_does_not_retry_until_physical_release(self):
+        task = Mock()
+        task.shortcut = SimpleNamespace(hold_mode=True)
+        task.pressed = False
+        task.is_recording = False
+        handler = ShortcutEventHandler({}, Mock(), Mock())
+        for _ in range(10):
+            handler.handle_keydown("caps_lock", task)
+        task.launch.assert_called_once()
+        handler.handle_keyup("caps_lock", task)
+        self.assertFalse(task.pressed)
+        handler.handle_keydown("caps_lock", task)
+        self.assertEqual(task.launch.call_count, 2)
+
+    def test_mouse_hold_can_retry_after_failed_open_and_release(self):
+        from core.client.shortcut.shortcut_manager import ShortcutManager
+        task = Mock()
+        task.shortcut = SimpleNamespace(hold_mode=True)
+        task.pressed = False
+        task.is_recording = False
+        handler = ShortcutEventHandler({}, Mock(), Mock())
+        handler.handle_keydown("x2", task)
+        self.assertTrue(task.pressed)
+        ShortcutManager._handle_mouse_keyup(Mock(), "x2", task)
+        self.assertFalse(task.pressed)
+        handler.handle_keydown("x2", task)
+        self.assertEqual(task.launch.call_count, 2)
 
 
 if __name__ == "__main__":

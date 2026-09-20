@@ -179,7 +179,7 @@ class _HotwordFileHandler(FileSystemEventHandler):
     def __init__(self, manager: HotwordManager):
         super().__init__()
         self.manager = manager
-        self._last_event = None
+        self._pending = {}
         self._timer = None
         self._lock = threading.Lock()
 
@@ -209,7 +209,7 @@ class _HotwordFileHandler(FileSystemEventHandler):
         current_time = time.time()
 
         with self._lock:
-            self._last_event = (filename, current_time)
+            self._pending[filename] = current_time
             if self._timer is None or not self._timer.is_alive():
                 self._timer = threading.Thread(target=self._debounced_worker, daemon=True)
                 self._timer.start()
@@ -220,25 +220,25 @@ class _HotwordFileHandler(FileSystemEventHandler):
             time.sleep(self._debounce_delay)
 
             with self._lock:
-                if self._last_event is None:
-                    break
-
-                filename, event_time = self._last_event
-                if time.time() - event_time < self._debounce_delay:
-                    continue
-
-                self._last_event = None
+                now = time.time()
+                ready = [filename for filename, event_time in self._pending.items()
+                         if now - event_time >= self._debounce_delay]
+                for filename in ready:
+                    del self._pending[filename]
 
             # 执行加载
-            handler = self._file_mapping.get(filename)
-            if handler:
-                try:
-                    handler()
-                    logger.info(f"热词文件已自动重新加载: {filename}")
-                except Exception as e:
-                    console.print(f'热词自动更新失败：{e}', style='bright_red')
-                    logger.error(f"更新热词失败: {e}", exc_info=True)
-            break
-
+            for filename in ready:
+                handler = self._file_mapping.get(filename)
+                if handler:
+                    try:
+                        handler()
+                        logger.info(f"热词文件已自动重新加载: {filename}")
+                    except Exception as e:
+                        console.print(f'热词自动更新失败：{e}', style='bright_red')
+                        logger.error(f"更新热词失败: {e}", exc_info=True)
+            with self._lock:
+                if not self._pending:
+                    self._timer = None
+                    return
 
 

@@ -51,6 +51,7 @@ class ClientConfig:
 
     threshold    = _gui_value('threshold', 0.3)
     audio_device = _gui_value('audio_device', None)
+    keep_microphone_open = _gui_value('keep_microphone_open', False)
 
     paste        = _gui_value('paste', False)
     restore_clip = True         # 模拟粘贴后是否恢复剪贴板

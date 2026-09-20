@@ -201,6 +201,11 @@ class ResultProcessor:
         if not message.is_final:
             return
 
+        if not text.strip() or text.strip().casefold() == "/sil":
+            logger.info("忽略空白或 /sil 识别结果，不执行输入或 LLM 操作")
+            self.state.pop_audio_file(message.task_id)
+            return
+
         # 繁体转换
         if Config.traditional_convert:
             try:

@@ -76,12 +76,21 @@ CapsWriter 的特别之处在于追求：
 下面是从用户 fork 构建 Windows 统一版 EXE 的完整流程。构建完成后，日常使用只需要双击一个
 `CapsWriter.exe`，不需要分别启动服务端和客户端。
 
+这是目录式便携版，不是单文件安装包。只想在另一台电脑上使用时，可以复制完整的
+`dist/CapsWriter-Offline` 文件夹，无需安装 Python 或 Git；仍需满足下面的 Windows
+运行环境要求，并在新电脑上重新选择录音设备。
+
+Git 仓库只提供源码、构建配置和说明，不包含 EXE、模型、llama.cpp DLL 或你的录音。
+因此 `git clone` 后需要按第 1～6 步准备环境并构建，不能直接找到一个已编译的 EXE。
+以下命令均在 **Windows PowerShell** 中执行；不要在 WSL 中运行这些命令来构建 Windows EXE。
+
 #### 1. 安装构建环境
 
 在 Windows 10/11 64 位系统中准备：
 
 - Git
-- Python 3.10 或更高版本
+- 推荐 Python 3.12 x64，本机已验证 Python 3.12.12。安装时保留 Tcl/Tk 和 Python Launcher。
+  当前下载脚本需要 Python 3.11 及以上；其他 Python 版本未作为本次发布的验证环境
 - Microsoft Visual C++ Redistributable 2015-2022 x64
 - 可选：FFmpeg。只有使用文件转录功能时才需要，并且 `ffmpeg.exe` 必须在 PATH 中
 
@@ -105,15 +114,15 @@ cd CapsWriter-Offline
 #### 3. 创建 Python 虚拟环境并安装依赖
 
 ```powershell
-py -3 -m venv .venv
-Set-ExecutionPolicy -Scope Process Bypass
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements-client.txt -r requirements-server.txt -r requirements-build.txt
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-client.txt -r requirements-server.txt -r requirements-build.txt
+.\.venv\Scripts\python.exe -c "import tkinter, sounddevice, soundfile, sherpa_onnx, sentencepiece, gguf, onnxruntime, PyInstaller; print('构建依赖导入成功')"
 ```
 
-如果 PowerShell 不允许执行激活脚本，也可以不激活环境，后续统一使用：
-`.\.venv\Scripts\python.exe`。
+不需要激活虚拟环境或修改 PowerShell 执行策略，后续始终调用
+`.\.venv\Scripts\python.exe`。如果提示找不到 Python 3.12，请先安装对应版本再继续。
+依赖导入检查失败时先处理安装错误，不要跳过并直接打包。
 
 #### 4. 准备模型
 
@@ -130,9 +139,9 @@ Qwen3-ASR、SenseVoice、Paraformer 和标点模型可以使用本仓库的 Mode
 
 | 组件 | 用途 |
 | --- | --- |
-| Qwen3-ASR | 准确率最高，适合有独显或接受较高延迟的电脑 |
+| Qwen3-ASR | 面向多语言和复杂口述；当前 INT4 编码器走 CPU，GGUF 解码可尝试 GPU |
 | SenseVoice-Small | 速度快、占用低，适合普通电脑和短句输入 |
-| Paraformer | CPU 专用，速度快，但准确率和语言支持较弱 |
+| Paraformer | 当前配置使用 CPU，适合低占用输入 |
 | Punct-CT-Transformer | 为 Paraformer 和部分文本流程提供标点 |
 
 Fun-ASR-Nano 使用本 fork 当前自定义引擎所需的 GGUF/ONNX 文件，不能用任意同名模型替代。
@@ -160,6 +169,14 @@ Test-Path models\Fun-ASR-Nano\Fun-ASR-Nano-GGUF\model\Fun-ASR-Nano-Decoder.q8_0.
 ```
 
 输出 `True` 才表示对应文件已准备好。GUI 打开后也会在模型下拉框下方显示缺少文件数量。
+上述命令仅检查代表文件，不代表全部文件已经齐全。打包前可检查 GUI 使用的全部文件清单：
+
+```powershell
+.\.venv\Scripts\python.exe -c "from pathlib import Path; from gui_launcher import MODEL_INFO; missing = [p for info in MODEL_INFO.values() for p in info['files'] if not Path(p).is_file()]; print('\n'.join(missing) if missing else '四套模型文件均已找到'); raise SystemExit(bool(missing))"
+```
+
+空间有限时可以只准备打算使用的模型。打包只复制已经存在的模型文件，不会自动下载；
+未准备的模型仍会显示在下拉菜单中，但不能启动。`downloads` 是下载缓存，不是最终模型目录。
 
 #### 5. 准备 llama.cpp 运行库
 
@@ -190,7 +207,7 @@ libomp140.x86_64.dll
 
 #### 6. 构建统一 EXE
 
-在仓库根目录执行：
+首次构建时，在仓库根目录执行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m PyInstaller --noconfirm build-desktop.spec
@@ -205,12 +222,43 @@ dist/CapsWriter-Offline/CapsWriter.exe
 请整体保留 `dist/CapsWriter-Offline` 文件夹，不能只复制单个 EXE。构建程序会把源码中的
 模型文件、`core`、`assets`、配置文件和 LLM 角色目录一起复制到发布目录。
 
+可以把该文件夹复制到另一台 Windows x64 电脑，或整体压缩传输，解压后直接打开 EXE。
+不要仅发送 `CapsWriter.exe`；`internal` 是 Python 和第三方运行库，`core` 是程序代码，
+`models` 是模型，`assets` 是界面资源，`LLM` 保存润色角色配置，均应随包保留。
+
+**重新构建时保护旧数据：** `--noconfirm` 可能直接替换同名发布目录。
+不要向正在使用、含个人配置和历史录音的目录直接打包。改用一个新的输出目录，例如：
+
+```powershell
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --distpath dist-next build-desktop.spec
+```
+
+先确认 `dist-next/CapsWriter-Offline/CapsWriter.exe` 能正常运行，再退出旧程序并迁移自己的
+`config_gui.json`、热词文件和需要保留的按年录音目录。不要用旧 `core`、`internal`
+覆盖新程序；手工改过的 `config_client.py`、`config_server.py` 应比较后迁移配置。
+再次构建时也不要重复覆盖已经在使用的 `dist-next`，应另选空目录。
+
+**关于两层 dist 目录：** 当前规范入口是 `dist/CapsWriter-Offline/CapsWriter.exe`。
+如果外层另有旧的 `dist/CapsWriter.exe`、`dist/config_gui.json`，确认没有使用且无需保留后
+可以删除。内层整个文件夹不是重复文件，而是当前完整程序。
+需要平铺时，先退出程序、处理外层同名旧文件，再把内层所有内容一起移动到 `dist`；
+EXE 和相邻资源必须保持相对位置。下次构建仍会生成内层目录，不会跟随手工搬移。
+
+可选的源码回归检查（不需要启动识别服务，不使用真实麦克风；GUI 测试需 Windows 桌面会话）：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p regressions.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p microphone_lifecycle.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p audio_input_regressions.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p desktop_hotwords.py -v
+```
+
 #### 7. 第一次启动和配置
 
 1. 双击 `dist\CapsWriter-Offline\CapsWriter.exe`。
 2. 在“识别模型”下拉框中选择模型。
 3. 查看模型下方的“建议”和“状态”文字：
-   - Qwen3-ASR：准确率最高，推荐有独显的电脑。
+   - Qwen3-ASR：适合多语言和复杂口述，推荐有独显的电脑。
    - Fun-ASR-Nano：准确率和速度均衡，适合日常中英文输入。
    - SenseVoice-Small：CPU 占用低，适合短句和普通电脑。
    - Paraformer：CPU 专用、速度快，不使用 GPU。
@@ -218,7 +266,8 @@ dist/CapsWriter-Offline/CapsWriter.exe
 5. 如果设备列表不完整，点击“刷新设备”。
 6. 点击“保存设置”只保存当前配置；点击“保存并启动”会保存配置并启动识别服务。
 7. 启动成功后配置窗口自动隐藏到 Windows 右下角托盘。
-8. 双击托盘图标可以重新打开配置页；右键托盘图标可以停止服务或退出程序。
+8. 双击托盘图标可以重新打开配置页，在配置页点击“停止”可停止服务；
+   右键托盘菜单可以打开配置或退出程序。
 
 Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理麦克风创建多个
 音频端点。配置页会按设备名称进行物理设备去重，并优先保留 `Windows WASAPI` 入口，因此
@@ -226,6 +275,35 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 
 #### 8. 使用语音输入
 
+在 EXE 配置页点击“热词与替换”，默认打开“文字替换”表格，不需要编写代码：
+
+1. “识别成了什么”填 `欧拉玛`，“替换成什么”填 `Ollama`。
+2. 点击“添加”，再点“保存当前页”。修改已有条目时先选中表格中的一行，
+   修改输入框后点“修改选中项”；删除使用“删除选中项”。
+3. 在“测试原文”输入一句话，点击“测试替换”查看结果。
+   普通替换按文字原样匹配，标点不需要转义；替换内容留空表示删除原词。
+
+已有简单规则会显示在表格中，复杂正则保留在高级页，保存不会删除它们。
+表格创建的条目由程序保存为 `hot-rule.txt` 内的 `@literal` 数据，不需要手工编辑。
+升级程序时请连同 `core` 目录一起更新；旧版本不认识这种条目。
+
+- “热词与别名（高级）”：每行 `目标词 | 别名`，例如 `CapsWriter | 卡普斯赖特`，
+  用于发音相近的纠错；这不是严格的逐字匹配。
+- “正则规则（高级）”：每行 `查找内容 = 替换内容`，等号两侧保留空格，
+  例如 `欧拉玛 = Ollama`。查找内容支持正则表达式；普通标点如 `.` 需写成 `\.`。
+- 点击“测试替换”可预览规则替换结果，不会录音或向其他窗口输入文字；
+  此测试只执行“规则替换”，不包含发音纠错或 LLM 润色。
+- 点击“保存当前页”。运行中的客户端通常约 3 秒后自动重载，无需重启模型；
+  未启动时会在下次启动加载。“文字替换”和“正则规则（高级）”共用一份文件；
+  热词别名单独保存，关闭时会提醒未保存的修改。
+- 文件保存在 EXE 同目录的 `hot.txt` 和 `hot-rule.txt`，不是源码目录；
+  保存前会检查规则格式、正则和文件是否被其他程序修改。
+
+- 默认按需开启麦克风，松键或取消即关闭，空闲时不占用设备。
+  部分 USB 麦克风重新开启后会有约 2 秒的无声冷启动期，立即说话可能丢失开头。
+- 此类设备若需要即按即说，可勾选“快速响应（空闲时持续占用麦克风）”并保存重启：
+  启动时短暂预热，之后保持采集，但空闲音频直接丢弃、不保存、不发送；
+  只有按键录音期间的音频会进入识别。此模式下 Windows 显示麦克风正在使用是正常现象。
 - 按住 `CapsLock` 说话，松开后自动识别并输入到当前获得焦点的输入框。
 - 按一下 `F8` 开始录音，再按一下 `F8` 停止录音并输入文字。
 - 也支持鼠标侧键 `X2`。
@@ -245,6 +323,9 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 | 录音设备选择 | 配置页读取 Windows 录音设备，保存实际设备名称和接口信息，启动前检查设备是否可用 |
 | 物理麦克风去重 | 合并同一麦克风的 MME、DirectSound、WASAPI、WDM-KS 端点，并优先选择 WASAPI |
 | 快捷键输入 | 支持 CapsLock 长按录音、松开输入，以及 F8 开始/停止录音 |
+| 麦克风生命周期 | 默认松键释放设备；可选快速响应模式，空闲音频不保存、不发送；专用 COM 线程修复 Windows 设备打开失败 |
+| 音频完整性 | 修复缓存切换丢帧，跳过全零录音和 `/sil` 输出，防止按住快捷键时反复失败重试 |
+| 可视化替换 | 表格添加、修改、删除文字替换；保留高级正则和热词别名，保存后自动重载 |
 | GPU 容错 | 自动尝试可用的 DirectML/Vulkan 后端；GPU 初始化或推理失败时回退 CPU |
 | GGUF/ONNX 兼容 | 增加 Qwen3-ASR、Fun-ASR-Nano 的模型接口和不同导出格式的兼容处理 |
 | 发布构建 | `build-desktop.spec` 将代码、运行库、模型、配置和托盘资源整理为统一发布目录 |

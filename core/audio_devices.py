@@ -55,3 +55,17 @@ def resolve_input_device(selection, devices=None):
     if len(matches) != 1:
         raise ValueError(f"Microphone unavailable or ambiguous: {selection}")
     return matches[0]["index"]
+
+
+def resolve_capture_device(selection):
+    """Use WASAPI for the default mic, never a different physical device."""
+    selected = resolve_input_device(selection)
+    if selected is not None:
+        return selected
+    default = sd.query_devices(kind="input")
+    matches = [
+        device for device in input_devices()
+        if device["hostapi"] == "Windows WASAPI"
+        and device["name"] == default["name"]
+    ]
+    return matches[0]["index"] if len(matches) == 1 else None

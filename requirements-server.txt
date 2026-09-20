@@ -1,5 +1,6 @@
 # ASR core
 sherpa-onnx
+sentencepiece
 numpy
 gguf
 onnxruntime-directml

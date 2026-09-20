@@ -34,6 +34,9 @@ class ShortcutEventHandler:
         """处理按键按下事件"""
         # 长按模式
         if task.shortcut.hold_mode:
+            if task.pressed:
+                return
+            task.pressed = True
             if not task.is_recording:
                 task.launch()
             return
@@ -58,6 +61,7 @@ class ShortcutEventHandler:
             return
 
         # 长按模式
+        task.pressed = False
         if not task.is_recording:
             return
 

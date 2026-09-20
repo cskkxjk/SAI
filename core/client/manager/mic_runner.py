@@ -35,9 +35,7 @@ class MicRunner:
         # 2. UI 提示
         TipsDisplay.show_mic_tips()
 
-        # 3. 开启运行组件 (音频流、快捷键监听)
-        if self.app.stream.start() is None:
-            raise RuntimeError("Cannot open microphone; see client_latest.log")
+        # Only listen for shortcuts here; each recording owns its audio stream.
         self.app.shortcut.start()
         
         # 4. 开启 UDP 控制 (如果启用)
@@ -55,6 +53,11 @@ class MicRunner:
         logger.info(f"CapsWriter Offline Client {__version__} (麦克风模式)")
         logger.info(f"日志级别: {Config.log_level}")
         
+        # Warm up before enabling shortcuts. No samples are sent or saved.
+        if Config.keep_microphone_open:
+            if await asyncio.to_thread(self.app.stream.prepare) is None:
+                raise RuntimeError("Cannot initialize microphone; see client_latest.log")
+
         # 1. 资源启动
         self.start_resources()
         if os.environ.get("CAPSWRITER_READY_FILE"):

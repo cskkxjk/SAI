@@ -188,6 +188,7 @@ class ShortcutManager:
             return
 
         # 长按模式
+        task.pressed = False
         if not task.is_recording:
             return
 
