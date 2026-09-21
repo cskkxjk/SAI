@@ -251,6 +251,7 @@ EXE 和相邻资源必须保持相对位置。下次构建仍会生成内层目�
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p microphone_lifecycle.py -v
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p audio_input_regressions.py -v
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p desktop_hotwords.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p upstream_merger.py -v
 ```
 
 #### 7. 第一次启动和配置
@@ -314,6 +315,18 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 
 
 #### 9. 本 fork 的主要改动
+
+2026-09-21 已检查上游至 `84912d5`，本次选择性合入：
+
+- `39c3318`：强制对齐上下文由 3072 扩大到 4096。
+- `84912d5`：跨分片匹配切点落在 token 内部时按字符拆分，避免空格或其他字符丢失，
+  并保留窗口之外的历史内容。
+
+暂未合入 `47df96a`、`29a0c8b` 的 llama.cpp b10621 绑定升级及
+`1a332b4` 的 Python 3.14 / uv 环境迁移。本 fork 继续使用本文档中的
+Python 3.12 构建流程和 b7798 DLL。新 ctypes 结构体和采样函数签名不能与旧 DLL
+混用；后续需同时升级运行库、绑定和构建环境，并验证 GGUF 模型实际推理。
+因此本次是选择性同步，不代表与上游所有提交完全一致。
 
 相对上游原版，本 fork 主要增加和调整了以下内容：
 
