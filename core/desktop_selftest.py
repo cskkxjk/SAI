@@ -28,6 +28,8 @@ def run():
         report["onnx_providers"] = onnxruntime.get_available_providers()
         report["input_devices"] = sum(
             device["max_input_channels"] > 0 for device in sounddevice.query_devices())
+        from core.hardware_info import detect_hardware
+        report["hardware"] = detect_hardware()
         pattern, replacement = parse_rules(encode_literal("a.b", r"C:\word"))[0]
         assert pattern.sub(replacement, "a.b") == r"C:\word"
         if args.model:

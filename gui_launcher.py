@@ -101,6 +101,10 @@ class Launcher(tk.Tk):
         self.download_thread = None
         self.download_cancel = threading.Event()
         self.download_events = queue.Queue()
+        self.hardware_events = queue.Queue()
+        self.hardware_busy = False
+        self.hardware_info = None
+        self.hardware_after = None
         self.status = tk.StringVar(value="未启动")
         self.vars = {
             "model_type": tk.StringVar(value=MODEL_CHOICES["qwen_asr"]),
@@ -129,6 +133,7 @@ class Launcher(tk.Tk):
         self._update_model_info()
         self._refresh_audio_devices()
         self.protocol("WM_DELETE_WINDOW", self._hide_or_close)
+        self.hardware_after = self.after(100, self._detect_hardware)
 
     def _load(self):
         try:
@@ -159,6 +164,23 @@ class Launcher(tk.Tk):
         tabs.add(form, text="识别设置")
         api_form = ttk.Frame(tabs, padding=14)
         tabs.add(api_form, text="语音 API")
+        hardware_form = ttk.Frame(tabs, padding=14)
+        tabs.add(hardware_form, text="设备检测")
+        self.hardware_text = tk.Text(hardware_form, height=16, width=55,
+                                     wrap="word", state="disabled", font=("Segoe UI", 10))
+        self.hardware_text.grid(row=0, column=0, sticky="nsew")
+        hardware_scroll = ttk.Scrollbar(hardware_form, command=self.hardware_text.yview)
+        hardware_scroll.grid(row=0, column=1, sticky="ns")
+        self.hardware_text.configure(yscrollcommand=hardware_scroll.set)
+        hardware_form.columnconfigure(0, weight=1)
+        hardware_form.rowconfigure(0, weight=1)
+        hardware_buttons = ttk.Frame(hardware_form)
+        hardware_buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.detect_button = ttk.Button(hardware_buttons, text="重新检测", command=self._detect_hardware)
+        self.detect_button.pack(side="left")
+        self.apply_hardware_button = ttk.Button(
+            hardware_buttons, text="应用建议到配置", command=self._apply_hardware, state="disabled")
+        self.apply_hardware_button.pack(side="left", padx=8)
         for row, (key, label) in enumerate((
                 ("asr_api_base_url", "服务地址"),
                 ("asr_api_model", "模型名称"),
@@ -229,6 +251,62 @@ class Launcher(tk.Tk):
         self.start_button = ttk.Button(buttons, text="保存并启动", command=self._start)
         self.start_button.pack(side="right")
         ttk.Button(buttons, text="停止", command=self._stop_processes).pack(side="right", padx=8)
+
+    def _set_hardware_text(self, text):
+        self.hardware_text.configure(state="normal")
+        self.hardware_text.delete("1.0", "end")
+        self.hardware_text.insert("1.0", text)
+        self.hardware_text.configure(state="disabled")
+
+    def _detect_hardware(self):
+        if self.hardware_busy:
+            return
+        self.hardware_busy = True
+        self.detect_button.configure(state="disabled")
+        self.apply_hardware_button.configure(state="disabled")
+        self._set_hardware_text("正在检测 CPU、内存和显卡...")
+
+        def worker():
+            try:
+                from core.hardware_info import detect_hardware
+                self.hardware_events.put((detect_hardware(), None))
+            except Exception as exc:
+                self.hardware_events.put((None, str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+        self.hardware_after = self.after(100, self._poll_hardware)
+
+    def _poll_hardware(self):
+        self.hardware_after = None
+        try:
+            info, error = self.hardware_events.get_nowait()
+        except queue.Empty:
+            self.hardware_after = self.after(100, self._poll_hardware)
+            return
+        self.hardware_busy = False
+        self.hardware_info = info
+        self.detect_button.configure(state="normal")
+        if error:
+            self._set_hardware_text(f"设备检测失败：{error}\n可以继续手动选择模型。")
+        else:
+            from core.hardware_info import format_hardware
+            self._set_hardware_text(format_hardware(info))
+            self.apply_hardware_button.configure(state="normal")
+
+    def _apply_hardware(self):
+        if not self.hardware_info or self.hardware_busy:
+            return
+        if self.running or self.starting or self.download_thread is not None:
+            messagebox.showinfo("暂时无法应用", "请先停止识别或等待模型下载结束。", parent=self)
+            return
+        recommendation = self.hardware_info["recommendation"]
+        if not messagebox.askokcancel(
+                "应用硬件建议", recommendation["reason"] +
+                "\n\n将更改模型、量化和 GPU 设置，麦克风、API 密钥和热词保持不变。\n"
+                "尚不会保存或启动，是否应用？", parent=self):
+            return
+        for key, value in recommendation["settings"].items():
+            self.vars[key].set(MODEL_CHOICES[value] if key == "model_type" else value)
+        self.status.set("建议已填入识别设置；确认模型文件就绪后保存并启动")
 
     def _open_hotwords(self):
         editor = getattr(self, "_hotword_editor", None)
@@ -580,6 +658,9 @@ class Launcher(tk.Tk):
             self.status.set("正在取消下载，请稍候；网络请求最多等待 30 秒")
             self.after(200, self._close)
             return
+        if self.hardware_after is not None:
+            self.after_cancel(self.hardware_after)
+            self.hardware_after = None
         self._stop_processes()
         if self.tray_icon:
             self.tray_icon.stop()
