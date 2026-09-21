@@ -13,7 +13,11 @@ def encoder_provider(path, requested):
     if requested.upper() != "DML":
         return requested
     path = Path(path)
-    quantized = ".int4." in path.name.lower()
+    # The downloader preserves legacy runtime names, without an INT4 suffix.
+    # Do not rely on optional model-source.json for the shipped encoder pair.
+    quantized = ".int4." in path.name.lower() or path.name.lower() in {
+        "qwen3_asr_encoder_frontend.onnx", "qwen3_asr_encoder_backend.onnx",
+    }
     try:
         manifest = json.loads((path.parent / "model-source.json").read_text("utf-8"))
         quantized = quantized or any(

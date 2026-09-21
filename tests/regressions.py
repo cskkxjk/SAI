@@ -18,6 +18,49 @@ from core.server.engines.qwen_asr_gguf.inference.encoder import encoder_provider
 
 
 class RegressionTests(unittest.TestCase):
+    def test_local_decode_failure_is_reported_without_typing_payload(self):
+        import queue
+        from config_server import ServerConfig
+        from core.server.engines.errors import RecognitionFailure
+        from core.server.state import WorkerState
+        from core.server.worker.task_handler import TaskHandler
+        handler = TaskHandler(queue.Queue(), queue.Queue(), [], WorkerState())
+        handler.pipeline = Mock()
+        handler.pipeline.process.side_effect = RecognitionFailure("Qwen decode failed")
+        task = SimpleNamespace(task_id="failure", socket_id="socket", type="mic", is_final=True)
+        with patch.object(ServerConfig, "model_type", "qwen_asr"):
+            handler.handle_audio_task(task)
+        result = handler.queue_out.get_nowait()
+        self.assertEqual(result.text, "")
+        self.assertEqual(result.error, "Qwen decode failed")
+        self.assertTrue(result.is_final)
+        self.assertNotIn(task.task_id, handler.state.sessions)
+
+    def test_downloaded_qwen_without_manifest_uses_cpu_encoder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("qwen3_asr_encoder_frontend.onnx", "qwen3_asr_encoder_backend.onnx"):
+                self.assertEqual(encoder_provider(root / name, "DML"), "CPU")
+                self.assertEqual(encoder_provider(root / name, "CPU"), "CPU")
+                self.assertEqual(encoder_provider(root / name, "CUDA"), "CUDA")
+
+    def test_qwen_decode_failure_is_not_returned_as_text(self):
+        from core.server.engines.qwen_asr_gguf.inference.asr import QwenASREngine
+        from core.server.engines.errors import RecognitionFailure
+        engine = object.__new__(QwenASREngine)
+        engine._decode = Mock(return_value=SimpleNamespace(is_aborted=True, text="garbage"))
+        with self.assertRaises(RecognitionFailure):
+            engine._safe_decode(np.zeros((1, 1)), "", 5, True, 0.4, streaming=False)
+        self.assertEqual(engine._decode.call_count, 4)
+
+    def test_qwen_decode_retry_can_recover(self):
+        from core.server.engines.qwen_asr_gguf.inference.asr import QwenASREngine
+        engine = object.__new__(QwenASREngine)
+        success = SimpleNamespace(is_aborted=False, text="valid")
+        engine._decode = Mock(side_effect=[SimpleNamespace(is_aborted=True), success])
+        self.assertIs(engine._safe_decode(np.zeros((1, 1)), "", 5, True, 0.4,
+                                         streaming=False), success)
+
     def test_renamed_qwen_int4_avoids_incorrect_directml_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

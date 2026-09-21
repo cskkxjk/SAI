@@ -14,6 +14,7 @@ from .schema import MsgType, StreamingMessage, DecodeResult, ASREngineConfig, Tr
 from .utils import normalize_language_name, validate_language
 from .encoder import QwenAudioEncoder
 from . import llama
+from ...errors import RecognitionFailure
 
 @dataclasses.dataclass
 class ASRS_Segment:
@@ -113,7 +114,8 @@ class QwenASREngine:
         # 1. Prefill
         self.ctx.clear_kv_cache()
         t_pre_start = time.time()
-        self.ctx.decode(batch)
+        if self.ctx.decode(batch) != 0:
+            raise RecognitionFailure("Qwen 预填充失败，请检查模型和推理后端")
         prefill_time = time.time() - t_pre_start
         
         # 2. Generation Loop（使用新采样器和随机种子）
@@ -133,7 +135,8 @@ class QwenASREngine:
                 break
             
             if self.ctx.decode_token(last_sampled_token) != 0:
-                    break
+                result.is_aborted = True
+                break
             
             display_queue.append(last_sampled_token)
             if len(display_queue) > rollback_num:
@@ -152,6 +155,8 @@ class QwenASREngine:
             
             last_sampled_token = sampler.sample(self.ctx.ptr)
             n_gen_tokens += 1
+        else:
+            result.is_aborted = True
             
         gen_time = time.time() - t_gen_start
         del sampler  # 释放采样器资源
@@ -195,8 +200,9 @@ class QwenASREngine:
             if not res.is_aborted:
                 break
             temperature += 0.3
-            res.text += "====解码有误，强制熔断===="
             print(f"\n\n[!] 触发重试 (Temp -> {temperature:.1f})\n")
+        if res.is_aborted:
+            raise RecognitionFailure("Qwen 解码失败，已阻止异常文字输出。请检查模型或使用 CPU 编码器。")
         return res 
 
     def _print_stats(self, stats: dict, audio_duration: float, t_total: float):
