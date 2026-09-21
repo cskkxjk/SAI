@@ -3,6 +3,7 @@ import os
 from . import logger
 import os, sys, subprocess, time
 from config_client import ClientConfig as Config
+from core.runtime_paths import APP_DIR
 
 
 class TrayManager:
@@ -28,7 +29,7 @@ class TrayManager:
             return
 
         # 获取图标路径
-        icon_path = os.path.join(self.app.base_dir, 'assets', 'icon.ico')
+        icon_path = str(APP_DIR / 'assets' / 'icon.ico')
         
         # 启用托盘
         enable_min_to_tray(

@@ -1,3 +1,7 @@
+"""
+llama.cpp b10621 的 ctypes Python 绑定封装
+"""
+
 import sys
 import os
 import ctypes
@@ -32,19 +36,18 @@ class llama_model_params(ctypes.Structure):
         ("tensor_buft_overrides", ctypes.POINTER(ctypes.c_void_p)),
         ("n_gpu_layers", ctypes.c_int32),
         ("split_mode", ctypes.c_int32),
+        ("load_mode", ctypes.c_int32),
         ("main_gpu", ctypes.c_int32),
         ("tensor_split", ctypes.POINTER(ctypes.c_float)),
         ("progress_callback", ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_float, ctypes.c_void_p)),
         ("progress_callback_user_data", ctypes.c_void_p),
         ("kv_overrides", ctypes.POINTER(ctypes.c_void_p)),
         ("vocab_only", ctypes.c_bool),
-        ("use_mmap", ctypes.c_bool),
-        ("use_direct_io", ctypes.c_bool),
-        ("use_mlock", ctypes.c_bool),
         ("check_tensors", ctypes.c_bool),
         ("use_extra_bufts", ctypes.c_bool),
         ("no_host", ctypes.c_bool),
         ("no_alloc", ctypes.c_bool),
+        ("load_mtp", ctypes.c_bool),
     ]
 
 class llama_context_params(ctypes.Structure):
@@ -53,8 +56,12 @@ class llama_context_params(ctypes.Structure):
         ("n_batch", ctypes.c_uint32),
         ("n_ubatch", ctypes.c_uint32),
         ("n_seq_max", ctypes.c_uint32),
+        ("n_rs_seq", ctypes.c_uint32),
+        ("n_outputs_max", ctypes.c_uint32),
+        ("n_outputs_max_per_seq", ctypes.c_uint32),
         ("n_threads", ctypes.c_int32),
         ("n_threads_batch", ctypes.c_int32),
+        ("ctx_type", ctypes.c_int32),
         ("rope_scaling_type", ctypes.c_int32),
         ("pooling_type", ctypes.c_int32),
         ("attention_type", ctypes.c_int32),
@@ -81,6 +88,7 @@ class llama_context_params(ctypes.Structure):
         ("kv_unified", ctypes.c_bool),
         ("samplers", ctypes.POINTER(ctypes.c_void_p)),
         ("n_samplers", ctypes.c_size_t),
+        ("ctx_other", ctypes.c_void_p),
     ]
 
 class llama_sampler_chain_params(ctypes.Structure):
@@ -390,7 +398,7 @@ def bind_llama_lib():
     llama_sampler_init_min_p.restype = ctypes.c_void_p
 
     llama_sampler_init_penalties = llama.llama_sampler_init_penalties
-    llama_sampler_init_penalties.argtypes = [ctypes.c_int32, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+    llama_sampler_init_penalties.argtypes = [ctypes.c_int32, ctypes.c_int32, ctypes.c_float, ctypes.c_float, ctypes.c_float]
     llama_sampler_init_penalties.restype = ctypes.c_void_p
 
     llama_sampler_accept = llama.llama_sampler_accept
@@ -431,13 +439,13 @@ init()
 class LlamaModel:
     """模型的面向对象封装"""
     def __init__(self, path, n_gpu_layers=-1, use_gpu=1):
-        self.ptr = self.load_model(path, n_gpu_layers=n_gpu_layers, use_gpu=use_gpu)
-        if not self.ptr and use_gpu:
+        try:
+            self.ptr = self.load_model(path, n_gpu_layers=n_gpu_layers, use_gpu=use_gpu)
+        except RuntimeError:
+            if not use_gpu:
+                raise
             logger.warning("GPU model load failed, retrying on CPU: %s", path)
             self.ptr = self.load_model(path, n_gpu_layers=0, use_gpu=False)
-        if not self.ptr:
-            raise RuntimeError(f"Cannot load GGUF model: {path}; check llama backend DLLs")
-            
         self.vocab = llama_model_get_vocab(self.ptr)
         self.n_embd = llama_model_n_embd(self.ptr)
         self.eos_token = llama_vocab_eos(self.vocab)
@@ -445,16 +453,16 @@ class LlamaModel:
     def load_model(self, model_path: str, n_gpu_layers: int = -1, use_gpu: bool = 0):
         """
         加载 GGUF 模型（自动处理初始化和路径编码）
-        
+
         Args:
             model_path: GGUF 模型文件路径
             n_gpu_layers: 卸载到 GPU 的层数 (-1 表示全部)
             use_gpu: 是否启用 GPU (如果为 False，则强制使用 CPU)
-            
+
         Returns:
             model: llama_model 指针
         """
-        
+
         model_path = Path(model_path)
 
         model_params = llama_model_default_params()
@@ -462,17 +470,14 @@ class LlamaModel:
         if not use_gpu:
             model_params.devices = (ctypes.c_void_p * 1)(None)
             model_params.n_gpu_layers = 0
-        
         model = llama_model_load_from_file(
             model_path.as_posix().encode('utf-8'),
             model_params
         )
 
-        if model:
-            return model
-        else:
-            logger.error(f"模型加载失败: {model_path}")
-            return None
+        if not model:
+            raise RuntimeError(f"llama.cpp 加载模型失败: {model_path}")
+        return model
 
     def tokenize(self, text: str, add_special: bool = False, parse_special: bool = True) -> List[int]:
         """(Native) 文本转 Token ID 列表"""
@@ -695,7 +700,7 @@ class LlamaSampler:
         if has_penalty:
             # llama.cpp 会自动管理历史 rings
             llama_sampler_chain_add(self.ptr, llama_sampler_init_penalties(
-                penalty_last_n, repeat_penalty, frequency_penalty, presence_penalty
+                n_vocab, penalty_last_n, repeat_penalty, frequency_penalty, presence_penalty
             ))
 
         # 3. 采样过滤器 (顺序很重要)

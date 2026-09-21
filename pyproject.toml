@@ -1,0 +1,65 @@
+[project]
+name = "capswriter-offline"
+version = "2.7.0"
+description = "CapsWriter-Offline 离线语音输入工具"
+requires-python = ">=3.14,<3.15"
+
+dependencies = [
+    # ASR 核心
+    "sherpa-onnx",
+    "numpy",
+    "gguf",
+    "onnxruntime-directml",
+    "sentencepiece",
+    "soundfile",
+    "numba",
+
+    # 网络与 API
+    "websockets",
+    "openai",
+    "ollama",
+    "httpx",
+    "requests",
+
+    # CLI 与界面
+    "rich",
+    "typer",
+    "colorama",
+    "markdown",
+    "markdown-it-py",
+    "tkhtmlview",
+
+    # 输入与硬件
+    "keyboard",
+    "pynput",
+    "pyclip",
+    "sounddevice",
+    "watchdog",
+    "pystray",
+    "Pillow",
+
+    # 数据处理
+    "pypinyin",
+    "srt",
+    "rapidfuzz",
+    "pydub",
+
+    # 对齐器分词（日/韩）
+    "nagisa",
+    "soynlp",
+
+    # Windows
+    "pywin32",
+    "psutil",
+]
+
+[dependency-groups]
+build = [
+    "pyinstaller",
+    "modelscope",
+]
+
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true

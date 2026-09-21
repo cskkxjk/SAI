@@ -26,6 +26,11 @@ def check_model() -> None:
         SystemExit: 当模型类型不支持或模型文件缺失时退出
     """
     model_type = Config.model_type.lower()
+    if model_type == 'openai_api':
+        from core.api_transcription_config import validate_api_settings
+        validate_api_settings(Config.asr_api_base_url, Config.asr_api_model,
+                              Config.asr_api_timeout)
+        return
     logger.debug(f"检查模型文件, 类型: {model_type}")
 
     # 根据模型类型确定需要检查的文件

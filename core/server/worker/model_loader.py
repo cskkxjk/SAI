@@ -38,8 +38,10 @@ class ModelLoader:
         3. 自适应挂载缺失能力的插件 (Punc, Aligner)
         """
         # 1. 延迟导入通用库
-        with console.status("载入模块中...", spinner="bouncingBall", spinner_style="yellow"):
-            import sherpa_onnx
+        model_type = Config.model_type.lower()
+        if model_type != 'openai_api':
+            with console.status("载入模块中...", spinner="bouncingBall", spinner_style="yellow"):
+                import sherpa_onnx
         
         t1 = time.time()
         model_type = Config.model_type.lower()
@@ -56,7 +58,7 @@ class ModelLoader:
                 self._load_punc_model()
 
             # 4. 智能补丁：如果引擎不自带时间戳能力，则挂载对齐器插件
-            if EngineCapabilities.TIMESTAMPS not in caps:
+            if EngineCapabilities.TIMESTAMPS not in caps and model_type != 'openai_api':
                 self._load_align_model()
 
             # 5. 加载热词 (如果引擎支持 HOTWORDS 能力)

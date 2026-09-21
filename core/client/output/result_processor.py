@@ -182,7 +182,22 @@ class ResultProcessor:
         """处理接收到的消息"""
         if message is None:
             return
-
+        message_error = getattr(message, "error", "")
+        if message_error:
+            logger.error(message_error)
+            if message.is_final:
+                self.state.pop_audio_file(message.task_id)
+            from core.runtime_paths import DATA_DIR
+            import json
+            try:
+                error_path = DATA_DIR / "logs" / "asr-error.json"
+                error_path.parent.mkdir(parents=True, exist_ok=True)
+                temp_path = error_path.with_suffix(".tmp")
+                temp_path.write_text(json.dumps({"error": message_error}), encoding="utf-8")
+                temp_path.replace(error_path)
+            except OSError:
+                pass
+            return
 
         # 使用 text 字段（简单拼接结果，用于语音输入）
         text = message.text

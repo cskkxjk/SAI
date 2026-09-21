@@ -1,10 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+import json
 from shutil import copy2, copytree, ignore_patterns
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
 from PyInstaller.utils.hooks import collect_data_files
 
 root = Path(SPECPATH)
+runtime_manifest = root / "core/server/engines/llama/bin/runtime-version.json"
+if (not runtime_manifest.is_file()
+        or json.loads(runtime_manifest.read_text(encoding="utf-8")).get("tag") != "b10621"):
+    raise RuntimeError("Install llama.cpp b10621 DLLs and runtime-version.json; see README.")
 required = ("srt", "gguf", "onnxruntime", "sherpa_onnx", "sounddevice",
             "soundfile", "pynput", "pystray")
 import importlib.util
@@ -17,7 +22,7 @@ a = Analysis(
     pathex=[str(root)],
     binaries=[],
     datas=collect_data_files("sherpa_onnx"),
-    hiddenimports=list(required) + ["rich._unicode_data.unicode17-0-0", "sentencepiece"],
+    hiddenimports=list(required) + ["sentencepiece"],
     runtime_hooks=["build_hook.py"],
     excludes=["IPython", "PySide6", "PySide2", "PyQt5", "matplotlib",
               "wx", "torch", "funasr", "transformers", "datasets",
@@ -43,15 +48,4 @@ for name in ("config_client.py", "config_server.py", "config_gui.json",
 for name in ("core", "assets", "LLM"):
     copytree(root / name, destination / name,
              ignore=ignore_patterns("__pycache__", "*.pyc", "*.bak", "export", "logs"))
-# Real directories make the distribution independent of the source checkout.
-from gui_launcher import MODEL_INFO
-for info in MODEL_INFO.values():
-    for relative in info["files"]:
-        source = root / relative
-        if source.is_file():
-            target = destination / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            copy2(source, target)
-            metadata = source.parent / "model-source.json"
-            if metadata.is_file():
-                copy2(metadata, target.parent / metadata.name)
+# Models are downloaded on demand beside the installed executable.

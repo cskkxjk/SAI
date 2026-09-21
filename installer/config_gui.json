@@ -1,0 +1,14 @@
+{
+  "model_type": "sensevoice",
+  "qwen_quantization": "q5_k",
+  "onnx_provider": "AUTO",
+  "llm_use_gpu": true,
+  "gpu_boost_enabled": false,
+  "language": "auto",
+  "threshold": 0.3,
+  "context": "",
+  "paste": false,
+  "audio_device": null,
+  "keep_microphone_open": false,
+  "child_tray": false
+}

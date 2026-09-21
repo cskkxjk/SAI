@@ -74,6 +74,9 @@ class ResultHandler:
         Returns:
             split_text: 切分后的文本（用于显示）
         """
+        message_error = getattr(message, "error", "")
+        if message_error:
+            raise RuntimeError(message_error)
         text_display = message.text
         text_accu = message.text_accu if message.text_accu else message.text
         text_split = cls.smart_split(text_accu)

@@ -133,7 +133,23 @@ class TaskHandler:
 
     def handle_audio_task(self, task):
         """处理音频识别任务。"""
-        result = self.pipeline.process(task)
+        from config_server import ServerConfig
+        session = self.state.sessions.get(task.task_id)
+        try:
+            if session is None or not session.result.error:
+                result = self.pipeline.process(task)
+            else:
+                result = session.result
+                result.is_final = task.is_final
+        except Exception as exc:
+            if ServerConfig.model_type != "openai_api":
+                raise
+            # Do not forward exceptions or response bodies that could contain credentials.
+            error = str(exc) if isinstance(exc, RuntimeError) else "语音 API 处理失败，请检查服务配置"
+            result = self.state.get_session(task.task_id, task.socket_id, task.type).result
+            result.error = error
+            result.text = result.text_accu = ''
+            result.is_final = task.is_final
         self.queue_out.put(result)
         if result.is_final:
             self.state.sessions.pop(task.task_id, None)

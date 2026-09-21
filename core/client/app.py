@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .state import ClientState
 from . import logger
+from core.runtime_paths import DATA_DIR
 from config_client import ClientConfig as Config, __version__
 from core.tools.signal_handler import register_signal
 from .state import console
@@ -45,7 +46,7 @@ class CapsWriterClient:
     """
     def __init__(self):
         # 确保正确的工作目录
-        self.base_dir = Path(__file__).parents[2]
+        self.base_dir = DATA_DIR
         os.chdir(self.base_dir)
             
         # 初始化事件循环
@@ -137,4 +138,3 @@ class CapsWriterClient:
             self.loop.run_until_complete(runner.run())
         except RuntimeError:
             ...
-

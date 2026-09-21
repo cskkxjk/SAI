@@ -1,12 +1,13 @@
 import os
 import json
 from pathlib import Path
+from core.runtime_paths import APP_DIR, DATA_DIR
 
 # 版本信息
-__version__ = '2.6'
+__version__ = '2.7.0'
 
 # 项目根目录
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = str(DATA_DIR)
 _GUI_CONFIG = Path(BASE_DIR) / 'config_gui.json'
 
 
@@ -42,19 +43,26 @@ class ServerConfig:
 
     # 语音模型选择：'qwen_asr', 'fun_asr_nano', 'sensevoice', 'paraformer'
     model_type = _gui_value('model_type', 'qwen_asr')
+    qwen_quantization = _gui_value('qwen_quantization', 'q5_k')
+    if qwen_quantization not in ('q5_k', 'q4_k'):
+        qwen_quantization = 'q5_k'
+    asr_api_base_url = _gui_value('asr_api_base_url', 'https://api.openai.com/v1')
+    asr_api_model = _gui_value('asr_api_model', 'whisper-1')
+    asr_api_key = _gui_value('asr_api_key', '')
+    asr_api_timeout = _gui_value('asr_api_timeout', 60)
 
     format_num = True       # 输出时是否将中文数字转为阿拉伯数字
     format_spell = True     # 输出时是否调整中英之间的空格
 
     enable_tray = _gui_value('child_tray', True)
-    hotwords_path = Path() / 'hot-server.txt' # 全局热词配置文件路径
+    hotwords_path = DATA_DIR / 'hot-server.txt' # 全局热词配置文件路径
 
     # 日志配置
     log_level = 'DEBUG'        # 日志级别：'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
     aligner_idle_timeout = 10  # 对齐引擎空闲多少秒后自动释放显存 (0 表示不释放)
 
     # GPU 预加速配置（有识别任务时，提前调高显存频率，降低延迟，需管理员权限运行）
-    gpu_boost_enabled = _gui_value('gpu_boost_enabled', False)
+    gpu_boost_enabled = model_type != 'openai_api' and _gui_value('gpu_boost_enabled', False)
     gpu_boost_cmd = 'nvidia-smi -lmc 9000'      # GPU 预加速命令，锁定显存频率到9000MHz（根据实际 GPU 调整）
     gpu_unboost_cmd = 'nvidia-smi -rmc'         # GPU 取消预加速命令，恢复显存到默认频率
     gpu_unboost_timeout = 1                     # 空闲多少秒后取消加速
@@ -76,7 +84,7 @@ class ModelPaths:
     """模型文件路径配置"""
 
     # 基础目录
-    model_dir = Path() / 'models'
+    model_dir = APP_DIR / 'models'
 
     # Paraformer 模型路径
     paraformer_dir = model_dir / 'Paraformer' / "speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx"
@@ -101,13 +109,13 @@ class ModelPaths:
     fun_asr_nano_gguf_ctc = fun_asr_nano_gguf_dir / 'model/Fun-ASR-Nano-CTC.int8.onnx'
     fun_asr_nano_gguf_llm_decode = fun_asr_nano_gguf_dir / 'model/Fun-ASR-Nano-Decoder.q8_0.gguf'
     fun_asr_nano_gguf_token = fun_asr_nano_gguf_dir / 'model/tokens.txt'
-    fun_asr_nano_gguf_hotwords = Path() / 'hot-server.txt'
+    fun_asr_nano_gguf_hotwords = DATA_DIR / 'hot-server.txt'
 
     # Qwen3-ASR 模型路径，自带标点
     qwen3_asr_gguf_dir = model_dir / 'Qwen3-ASR' / 'Qwen3-ASR-1.7B'
     qwen3_asr_gguf_encoder_frontend = qwen3_asr_gguf_dir / 'qwen3_asr_encoder_frontend.onnx'
     qwen3_asr_gguf_encoder_backend = qwen3_asr_gguf_dir / 'qwen3_asr_encoder_backend.onnx'
-    qwen3_asr_gguf_llm_decode = qwen3_asr_gguf_dir / 'qwen3_asr_llm.gguf'
+    qwen3_asr_gguf_llm_decode = qwen3_asr_gguf_dir / f'qwen3_asr_llm.{ServerConfig.qwen_quantization}.gguf'
 
     # Force-Aligner 模型路径
     force_aligner_gguf_dir = model_dir / 'Qwen3-ForcedAligner' / 'Qwen3-ForcedAligner-0.6B'

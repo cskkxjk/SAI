@@ -17,6 +17,7 @@ from .worker.process_manager import ProcessManager
 from .connection.server_manager import SocketManager
 from .ui.tray_manager import TrayManager
 from . import logger
+from core.runtime_paths import DATA_DIR
 
 class CapsWriterServer:
     """
@@ -26,7 +27,7 @@ class CapsWriterServer:
     """
     def __init__(self):
         # 确保正确的工作目录
-        self.base_dir = Path(__file__).parents[2]
+        self.base_dir = DATA_DIR
         os.chdir(self.base_dir)
 
         # 初始化事件循环

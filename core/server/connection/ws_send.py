@@ -39,7 +39,8 @@ async def ws_send(app):
                 text=result.text,
                 text_accu=result.text_accu,
                 tokens=result.tokens,
-                timestamps=result.timestamps
+                timestamps=result.timestamps,
+                error=result.error,
             )
 
             # 获得 socket
@@ -68,5 +69,4 @@ async def ws_send(app):
         except Exception as e:
             logger.error(f"发送结果时发生错误: {e}", exc_info=True)
             print(e)
-
 

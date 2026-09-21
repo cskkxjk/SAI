@@ -8,6 +8,7 @@ LLM 角色加载器
 """
 
 import sys
+import importlib.util
 from pathlib import Path
 from typing import Dict
 from .llm_role_config import RoleConfig
@@ -50,6 +51,17 @@ class RoleLoader:
 
         return role_name
 
+    @staticmethod
+    def _load_module(file_path, module_name):
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        module = importlib.util.module_from_spec(spec)
+        # Read the selected data file, not an identically named installation module.
+        # Compiling source also avoids stale bytecode after rapid editor saves.
+        exec(compile(file_path.read_text(encoding="utf-8"), str(file_path), "exec"),
+             module.__dict__)
+        sys.modules[module_name] = module
+        return module
+
     def load_all_roles(self):
         """加载所有角色"""
         self.roles_registry.clear()
@@ -65,7 +77,7 @@ class RoleLoader:
                 if module_name in sys.modules:
                     del sys.modules[module_name]
 
-                module = __import__(module_name, fromlist=[''])
+                module = self._load_module(file_path, module_name)
 
                 if not hasattr(module, 'provider') or not hasattr(module, 'model'):
                     errors.append({
@@ -105,7 +117,7 @@ class RoleLoader:
             if module_name in sys.modules:
                 del sys.modules[module_name]
 
-            module = __import__(module_name, fromlist=[''])
+            module = self._load_module(file_path, module_name)
 
             if not hasattr(module, 'provider') or not hasattr(module, 'model'):
                 return False, "缺少必需字段"

@@ -2,12 +2,13 @@ import os
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from core.runtime_paths import DATA_DIR
 
 # 版本信息
-__version__ = '2.6'
+__version__ = '2.7.0'
 
 # 项目根目录
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = str(DATA_DIR)
 _GUI_CONFIG = Path(BASE_DIR) / 'config_gui.json'
 
 

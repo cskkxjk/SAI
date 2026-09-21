@@ -56,6 +56,11 @@ class EngineFactory:
     def create_asr_engine(model_type: str) -> BaseASREngine:
         """创建 ASR 核心引擎"""
         model_type = model_type.lower()
+        if model_type == 'openai_api':
+            from .openai_asr import APIConfig, OpenAIASREngine
+            return OpenAIASREngine(APIConfig(
+                Config.asr_api_base_url, Config.asr_api_model,
+                Config.asr_api_key, Config.asr_api_timeout))
         if model_type not in EngineFactory._ASR_LOADERS:
             raise ValueError(f"EngineFactory: 不支持的 ASR 类型 '{model_type}'")
 

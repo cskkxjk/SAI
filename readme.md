@@ -4,7 +4,8 @@
 
 > **按住 CapsLock 说话，松开就上屏。就这么简单。**
 
-**CapsWriter-Offline** 是一个专为 Windows 打造的**完全离线**语音输入工具。
+**CapsWriter-Offline** 是一个专为 Windows 打造的语音输入工具，默认使用本地模型，
+也支持可选的 OpenAI 兼容语音转写 API。
 
 ## ✨ 核心特性
 
@@ -17,7 +18,34 @@
 -   **托盘菜单**：右键托盘图标即可添加热词、复制结果、清除LLM记忆。
 -   **C/S 架构**：服务端与客户端分离，虽然 Win7 老电脑跑不了服务端模型，但最少能用客户端输入。
 -   **日记归档**：按日期保存你的每一句语音及其识别结果。
--   **录音保存**：所有语音均保存为本地音频文件，隐私安全，永不丢失。
+-   **录音保存**：录音可保存为本地音频文件；API 模式还会向配置的服务上传录音。
+
+### OpenAI 兼容语音 API
+
+除本地模型外，Windows 图形配置页还支持 `OpenAI 兼容 API`。选择该模式后不需要
+准备 `models` 目录，也不会加载本地 ASR 模型；录音片段会发送到配置的
+`/audio/transcriptions` 接口，返回的文字仍会经过本项目现有的热词、替换和上屏流程。
+
+在“语音 API”页填写：
+
+1. **服务地址**：例如 `https://api.openai.com/v1`，或兼容服务的 `/v1` 地址。
+2. **模型名称**：例如 `whisper-1`，以服务端实际支持的模型名为准。
+3. **API Key**：保存在当前用户数据目录的 `config_gui.json` 中；也可以留空并使用
+   环境变量 `CAPSWRITER_ASR_API_KEY`。
+4. **请求超时**：默认 60 秒。
+
+远程地址要求使用 HTTPS；本机开发服务可使用 `http://127.0.0.1`、
+`http://localhost` 或 `http://[::1]`。启用时程序会再次确认，因为录音和上下文提示
+会离开本机，服务商可能按请求收费。该模式沿用现有分段策略，长录音可能在松键前就提交
+片段，不是实时流式接口；网络延迟会影响最终文字出现时间。失败不自动重试，
+以避免重复计费。API 没有提供时间戳时，字幕时间仅为估算，不适合精确对齐。
+
+服务必须支持语音转写，不是只有 `/chat/completions` 就能使用。上下文作为可选 `prompt`
+提交，语言自动检测时不发送 `language`；若服务不支持这些可选字段，可清空上下文、
+选择自动语言。Key 为明文，请勿共享个人配置文件或将其提交 Git。
+
+安装包不包含模型。首次打开后，在“识别设置”
+将识别模型切换为“OpenAI 兼容 API”，填写参数后“保存并启动”。
 
 **CapsWriter-Offline** 的精髓在于：**完全离线**（不受网络限制）、**响应极快**、**高准确率** 且 **高度自定义**。我追求的是一种「如臂使指」的流畅感，让它成为一个专属的一体化输入利器。无需安装，一个U盘就能带走，随插随用，保密电脑也能用。
 
@@ -71,7 +99,49 @@ CapsWriter 的特别之处在于追求：
 
 ## 🎬 快速开始
 
-### Windows fork 从零构建统一 EXE
+### Windows 安装版与源码构建
+
+#### 使用安装向导
+
+安装包位于 `dist/installer`，运行 `CapsWriter-Offline-2.7.0-Setup.exe`。
+这是不含模型的单文件安装包，只需复制 Setup.exe，不再需要旁边的 `.bin` 文件。
+安装过程不下载模型；首次使用本地识别时，在程序配置页从 ModelScope 按需下载。
+
+1. 选择安装语言，接受许可证。
+2. 选择安装路径，默认是当前用户的 `%LOCALAPPDATA%\Programs\CapsWriter Offline`。
+3. 安装程序和运行库，不需要预先选择或准备模型。
+4. 选择开始菜单目录，可勾选创建桌面快捷方式，点击“安装”。
+5. 启动后在“识别设置”选择模型，检查“状态”，缺少文件时点击“下载模型”。
+6. 等待下载和校验完成，选择麦克风并点击“保存并启动”。默认模型是 SenseVoice。
+
+模型下载到 **安装目录下的 `models` 文件夹**，不是用户配置目录。请安装到当前用户可写
+且空间充足的目录。SenseVoice 和 Paraformer 会自动下载标点模型。
+下载直连 ModelScope，不使用系统代理；进度显示已完成与总字节数，可取消。
+下载以 `.part` 临时文件保存，大小和 SHA256 校验通过后才替换正式文件。
+失败或取消会清除当前未完成文件，已完成文件保留；再次下载会先校验并跳过完整文件。
+“刷新状态”检查文件是否存在及非空；“校验／修复模型”联网执行完整 SHA256 校验，
+修复大小正确但内容损坏的文件。API 模式不需要下载任何模型。
+下载时不可启动识别，识别运行时需先停止再下载，防止替换正在使用的文件。
+
+**Qwen3-ASR 量化版本：** 选择 Qwen3-ASR 后，“Qwen 量化”下拉框可选择
+`q5_k`（默认，独显优先，解码器约 1.47 GB）或 `q4_k`（集显／低显存可尝试，
+解码器约 1.28 GB）。两个版本共用 INT4 ONNX 编码器，当前编码器走 CPU；
+GGUF 解码器按 GPU 设置运行。具体延迟和效果以自己的录音测试为准。
+各自保存为 `qwen3_asr_llm.q5_k.gguf` 和 `qwen3_asr_llm.q4_k.gguf`，可同时保留。
+切换后检查状态、下载缺少文件，再“保存并启动／重启”才能生效。
+旧版 `qwen3_asr_llm.gguf` 点击下载时会先校验，匹配所选版本才改名复用。
+命令行可用 `python download_models.py qwen_asr --quantization q4_k`。
+
+安装版已经包含 Python 和推理库，不需要安装 Python、Git 或 uv。
+它是当前用户安装，不默认请求管理员权限；自选目录必须是当前用户可写的位置。
+可以通过 Windows“已安装的应用”或开始菜单中的卸载入口卸载。
+程序设置、热词、LLM 角色和录音保存在 `%LOCALAPPDATA%\CapsWriterOffline`，
+托盘菜单“打开数据目录”可以打开它；更新和卸载不会删除这些个人数据。
+
+旧便携版数据不会自动迁移。退出新旧两版并做好备份后，将旧版的 `config_gui.json`、
+`hot.txt`、`hot-rule.txt`、`hot-server.txt`、`LLM` 和需要保留的年份目录复制到上述数据目录；
+不要复制旧版 `core`、`internal` 或 DLL。安装版和便携版不要同时运行。
+安装包未配置代码签名，发布者身份提示不能作为已签名发行版看待。
 
 下面是从用户 fork 构建 Windows 统一版 EXE 的完整流程。构建完成后，日常使用只需要双击一个
 `CapsWriter.exe`，不需要分别启动服务端和客户端。
@@ -89,8 +159,9 @@ Git 仓库只提供源码、构建配置和说明，不包含 EXE、模型、lla
 在 Windows 10/11 64 位系统中准备：
 
 - Git
-- 推荐 Python 3.12 x64，本机已验证 Python 3.12.12。安装时保留 Tcl/Tk 和 Python Launcher。
-  当前下载脚本需要 Python 3.11 及以上；其他 Python 版本未作为本次发布的验证环境
+- Python 3.14 x64（普通版，不使用自由线程实验构建），保留 Tcl/Tk
+- uv，用于按 `uv.lock` 安装构建环境
+- Inno Setup 6.7.3 或兼容的 6.x 版本，用于编译安装向导；仅构建便携版时不需要
 - Microsoft Visual C++ Redistributable 2015-2022 x64
 - 可选：FFmpeg。只有使用文件转录功能时才需要，并且 `ffmpeg.exe` 必须在 PATH 中
 
@@ -111,25 +182,29 @@ git clone https://github.com/cskkxjk/CapsWriter-Offline.git
 cd CapsWriter-Offline
 ```
 
-#### 3. 创建 Python 虚拟环境并安装依赖
+#### 3. 创建 Python 3.14 环境并安装锁定依赖
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements-client.txt -r requirements-server.txt -r requirements-build.txt
+python -m pip install uv
+uv python install 3.14
+uv sync --locked --group build
 .\.venv\Scripts\python.exe -c "import tkinter, sounddevice, soundfile, sherpa_onnx, sentencepiece, gguf, onnxruntime, PyInstaller; print('构建依赖导入成功')"
 ```
 
 不需要激活虚拟环境或修改 PowerShell 执行策略，后续始终调用
-`.\.venv\Scripts\python.exe`。如果提示找不到 Python 3.12，请先安装对应版本再继续。
+`.\.venv\Scripts\python.exe`。上面的第一个 `python` 可以是已有 Python，用于安装 uv；
+没有 Python 时可先安装 Python 3.14 x64，再执行命令。安装 uv 后如命令无法找到，
+重新打开终端或把其 Scripts 目录加入 PATH。
+`pyproject.toml` 与 `uv.lock` 是当前推荐的构建依赖来源，使用阿里云 PyPI 镜像；
+旧的 requirements 文件仅保留给原有启动流程，不作为本次升级的锁定构建环境。
 依赖导入检查失败时先处理安装错误，不要跳过并直接打包。
 
-#### 4. 准备模型
+#### 4. 模型按需下载（构建前可跳过）
 
-模型文件不放入 Git 仓库，也不能只下载到 `dist` 目录。必须先放在源码仓库的 `models`
-目录中，再执行 PyInstaller 构建。
+模型文件不放入 Git 仓库，也不再打包进 EXE 安装包。构建前无需下载。
+构建或安装后打开程序，在“识别设置”选择模型并点击“下载模型”即可。
 
-Qwen3-ASR、SenseVoice、Paraformer 和标点模型可以使用本仓库的 ModelScope 下载脚本：
+如需直接从源码运行，可选用同一下载逻辑的命令行入口（下载到源码目录的 `models`）：
 
 ```powershell
 .\.venv\Scripts\python.exe download_models.py all
@@ -140,16 +215,13 @@ Qwen3-ASR、SenseVoice、Paraformer 和标点模型可以使用本仓库的 Mode
 | 组件 | 用途 |
 | --- | --- |
 | Qwen3-ASR | 面向多语言和复杂口述；当前 INT4 编码器走 CPU，GGUF 解码可尝试 GPU |
+| Fun-ASR-Nano | 从 HaujetZhao/Fun-ASR-Nano-2512-GGUF 下载当前引擎兼容文件 |
 | SenseVoice-Small | 速度快、占用低，适合普通电脑和短句输入 |
 | Paraformer | 当前配置使用 CPU，适合低占用输入 |
 | Punct-CT-Transformer | 为 Paraformer 和部分文本流程提供标点 |
 
 Fun-ASR-Nano 使用本 fork 当前自定义引擎所需的 GGUF/ONNX 文件，不能用任意同名模型替代。
-请从上游项目的模型发布页下载 `Fun-ASR-Nano-GGUF.zip`：
-
-<https://github.com/HaujetZhao/CapsWriter-Offline/releases/tag/models>
-
-解压后，将以下四个文件放入：
+GUI 和命令行会自动将四个文件下载到以下目录，无需手动解压：
 
 ```text
 models/Fun-ASR-Nano/Fun-ASR-Nano-GGUF/model/
@@ -159,7 +231,7 @@ models/Fun-ASR-Nano/Fun-ASR-Nano-GGUF/model/
 └── tokens.txt
 ```
 
-构建前可检查四套模型的目录是否存在：
+如已手动放置模型，可检查目录是否存在（不是构建要求）：
 
 ```powershell
 Test-Path models\Qwen3-ASR\Qwen3-ASR-1.7B\qwen3_asr_encoder_frontend.onnx
@@ -175,15 +247,15 @@ Test-Path models\Fun-ASR-Nano\Fun-ASR-Nano-GGUF\model\Fun-ASR-Nano-Decoder.q8_0.
 .\.venv\Scripts\python.exe -c "from pathlib import Path; from gui_launcher import MODEL_INFO; missing = [p for info in MODEL_INFO.values() for p in info['files'] if not Path(p).is_file()]; print('\n'.join(missing) if missing else '四套模型文件均已找到'); raise SystemExit(bool(missing))"
 ```
 
-空间有限时可以只准备打算使用的模型。打包只复制已经存在的模型文件，不会自动下载；
-未准备的模型仍会显示在下拉菜单中，但不能启动。`downloads` 是下载缓存，不是最终模型目录。
+空间有限时只需下载打算使用的模型。即使源码目录已有模型，打包也不会复制它们。
+未准备的模型仍会显示在下拉菜单中，点击“下载模型”后即可准备使用。
 
 #### 5. 准备 llama.cpp 运行库
 
 Qwen3-ASR 和 Fun-ASR-Nano 的 GGUF 解码器需要 llama.cpp 的 Windows Vulkan DLL。
 从下面的官方发行包下载并解压：
 
-<https://github.com/ggml-org/llama.cpp/releases/download/b7798/llama-b7798-bin-win-vulkan-x64.zip>
+<https://github.com/ggml-org/llama.cpp/releases/download/b10621/llama-b10621-bin-win-vulkan-x64.zip>
 
 将压缩包中的 DLL 文件全部复制到：
 
@@ -199,11 +271,15 @@ ggml.dll
 ggml-base.dll
 ggml-vulkan.dll
 ggml-cpu-x64.dll
-libomp140.x86_64.dll
+libomp.dll
 ```
 
 不要把这些 DLL 放入 `models`，也不要只复制 `llama.dll`。`.gitignore` 默认忽略 DLL，
 所以其他设备从 Git clone 后仍需要完成这一步。
+压缩包 SHA256 为 `2672d85bf87c8280d94dee01eb6a86280046878f70a07d786a93637fa9081163`；
+可用 `Get-FileHash <压缩包路径> -Algorithm SHA256` 核对。保留仓库提供的
+`core/server/engines/llama/bin/runtime-version.json`，构建时会检查版本。
+升级时先把旧 bin 目录备份到其他位置，再放入新版 DLL，不要混用 b7798 和 b10621。
 
 #### 6. 构建统一 EXE
 
@@ -220,7 +296,7 @@ dist/CapsWriter-Offline/CapsWriter.exe
 ```
 
 请整体保留 `dist/CapsWriter-Offline` 文件夹，不能只复制单个 EXE。构建程序会把源码中的
-模型文件、`core`、`assets`、配置文件和 LLM 角色目录一起复制到发布目录。
+`core`、`assets`、配置文件和 LLM 角色目录一起复制到发布目录，但不复制模型。
 
 可以把该文件夹复制到另一台 Windows x64 电脑，或整体压缩传输，解压后直接打开 EXE。
 不要仅发送 `CapsWriter.exe`；`internal` 是 Python 和第三方运行库，`core` 是程序代码，
@@ -252,7 +328,32 @@ EXE 和相邻资源必须保持相对位置。下次构建仍会生成内层目�
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p audio_input_regressions.py -v
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p desktop_hotwords.py -v
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p upstream_merger.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p installer_paths.py -v
 ```
+
+#### 6.1 编译带安装向导的 EXE
+
+在全新的 staging 目录构建，再用 Inno Setup 编译：
+
+```powershell
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --distpath build/installer-stage build-desktop.spec
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\CapsWriter.iss
+```
+
+Inno Setup 安装路径不同时，请把第二条命令改成实际 `ISCC.exe` 路径。
+安装包不需要任何模型文件。输出在 `dist/installer`，只有一个 Setup.exe。
+旧版遗留的 `CapsWriter-Offline-2.7.0-Setup-*.bin` 不再使用，新版生成成功后可删除。
+不要使用含个人日志、录音、API 密钥的旧发布目录作为安装包源；
+默认配置来自 `installer/config_gui.json`，首次安装不会继承本机的麦克风设备选择。
+
+打包后可执行离线诊断，不会录音或模拟键盘输入：
+
+```powershell
+.\build\installer-stage\CapsWriter-Offline\CapsWriter.exe --self-test
+```
+
+结果保存在数据目录的 `logs/self-test.json`。可加 `--model sensevoice --audio C:\path\sample.wav`
+验证指定音频文件的实际识别；换成 `fun_asr_nano` 或 `qwen_asr` 可验证新版 GGUF 运行库。
 
 #### 7. 第一次启动和配置
 
@@ -297,7 +398,8 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 - 点击“保存当前页”。运行中的客户端通常约 3 秒后自动重载，无需重启模型；
   未启动时会在下次启动加载。“文字替换”和“正则规则（高级）”共用一份文件；
   热词别名单独保存，关闭时会提醒未保存的修改。
-- 文件保存在 EXE 同目录的 `hot.txt` 和 `hot-rule.txt`，不是源码目录；
+- 便携版文件保存在 EXE 同目录的 `hot.txt` 和 `hot-rule.txt`；
+  安装版保存在 `%LOCALAPPDATA%\CapsWriterOffline`，不是源码目录；
   保存前会检查规则格式、正则和文件是否被其他程序修改。
 
 - 默认按需开启麦克风，松键或取消即关闭，空闲时不占用设备。
@@ -316,17 +418,17 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 
 #### 9. 本 fork 的主要改动
 
-2026-09-21 已检查上游至 `84912d5`，本次选择性合入：
+2026-09-21 已合并上游至 `84912d5`：
 
 - `39c3318`：强制对齐上下文由 3072 扩大到 4096。
 - `84912d5`：跨分片匹配切点落在 token 内部时按字符拆分，避免空格或其他字符丢失，
   并保留窗口之外的历史内容。
 
-暂未合入 `47df96a`、`29a0c8b` 的 llama.cpp b10621 绑定升级及
-`1a332b4` 的 Python 3.14 / uv 环境迁移。本 fork 继续使用本文档中的
-Python 3.12 构建流程和 b7798 DLL。新 ctypes 结构体和采样函数签名不能与旧 DLL
-混用；后续需同时升级运行库、绑定和构建环境，并验证 GGUF 模型实际推理。
-因此本次是选择性同步，不代表与上游所有提交完全一致。
+- `47df96a`、`29a0c8b`：llama.cpp b10621 结构体及采样函数签名适配，
+  同时保留本 fork 的 GPU 加载失败回退 CPU。
+- `1a332b4`：Python 3.14 / uv 环境管理；本 fork 另外补齐模型下载和安装版构建依赖。
+
+新版代码与 b7798 DLL 不兼容，必须整套升级并重新构建 EXE。
 
 相对上游原版，本 fork 主要增加和调整了以下内容：
 

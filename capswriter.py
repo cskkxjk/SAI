@@ -20,13 +20,18 @@ def prepare_streams(root, role):
 
 
 def main():
+    from core.runtime_paths import DATA_DIR, initialize_user_data
+    initialize_user_data()
     root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-    os.chdir(root)
+    os.chdir(DATA_DIR)
     role = next((r for r in ("server", "client") if f"--{r}" in sys.argv), None)
     # Spawned workers enter freeze_support before the normal role dispatch.
     # Give them real streams so exceptions don't open invisible error dialogs.
-    prepare_streams(root, role or os.environ.get("CAPSWRITER_ROLE", "desktop"))
+    prepare_streams(DATA_DIR, role or os.environ.get("CAPSWRITER_ROLE", "desktop"))
     multiprocessing.freeze_support()
+    if "--self-test" in sys.argv:
+        from core.desktop_selftest import run
+        return run()
     if role:
         os.environ["CAPSWRITER_ROLE"] = role
         sys.argv.remove(f"--{role}")
