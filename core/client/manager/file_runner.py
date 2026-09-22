@@ -57,9 +57,13 @@ class FileRunner:
             
             logger.info("所有文件已处理完成")
 
-            # Explorer drag-and-drop launches have no usable stdin.
-            if sys.stdin is not None and sys.stdin.isatty():
-                input('\n按回车退出\n')
+            # Explorer drag-and-drop launches have no usable stdin; the
+            # "press enter to exit" prompt only makes sense in a console.
+            if sys.stdin is not None:
+                try:
+                    input('\n按回车退出\n')
+                except EOFError:
+                    pass
 
         except Exception as e:
             logger.error(f"文件模式运行异常: {e}", exc_info=True)
