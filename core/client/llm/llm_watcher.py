@@ -216,12 +216,26 @@ class LLMFileWatcher(FileSystemEventHandler):
         self._print_all_roles()
 
     def stop(self):
-        """停止监控"""
+        """停止监控（不无限等待，避免退出时卡死）"""
         if self._is_started:
-            self.observer.stop()
-            self.observer.join()
+            observer = self.observer
+            waiter = threading.Thread(target=self._stop_observer, args=(observer,),
+                                      daemon=True)
+            waiter.start()
+            waiter.join(timeout=5)
+            if waiter.is_alive():
+                logger.warning("LLM 文件监视线程未能及时退出，跳过等待")
             self._is_started = False
             logger.info("LLM 文件监控已停止")
+
+    @staticmethod
+    def _stop_observer(observer) -> None:
+        """watchdog 的 stop() 内部会 join 发射线程，放到子线程里避免卡住主线程。"""
+        try:
+            observer.stop()
+            observer.join()
+        except RuntimeError:
+            pass
 
     def _print_all_roles(self):
         """打印所有已加载的角色信息"""

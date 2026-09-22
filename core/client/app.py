@@ -1,6 +1,6 @@
 # coding: utf-8
 """
-CapsWriter Offline 客户端主程序门面类 (Facade)
+SAI 客户端主程序门面类 (Facade)
 
 采用外观模式统一管理音频流 (AudioStreamManager)、
 识别结果处理 (ResultProcessor) 和快捷键管理 (ShortcutManager)。
@@ -38,9 +38,9 @@ from platform import system
 
 
 
-class CapsWriterClient:
+class SaiClient:
     """
-    CapsWriter 客户端门面类
+    SAI 客户端门面类
     
     管理的外部接口简洁：start()。
     """
@@ -85,7 +85,7 @@ class CapsWriterClient:
         """
         统一释放所有资源（清理顺序：硬件 -> 托盘 -> WebSocket -> State）
         """
-        logger.info("正在执行 CapsWriterClient 资源释放...")
+        logger.info("正在执行 SaiClient 资源释放...")
 
         # 1. 停止核心运行组件
         self.udp.stop()
@@ -137,4 +137,5 @@ class CapsWriterClient:
         try:
             self.loop.run_until_complete(runner.run())
         except RuntimeError:
-            ...
+            logger.error("客户端启动失败", exc_info=True)
+            return 1

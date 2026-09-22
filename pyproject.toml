@@ -1,7 +1,7 @@
 [project]
-name = "capswriter-offline"
+name = "sai"
 version = "2.7.0"
-description = "CapsWriter-Offline 离线语音输入工具"
+description = "SAI 离线语音输入工具"
 requires-python = ">=3.14,<3.15"
 
 dependencies = [

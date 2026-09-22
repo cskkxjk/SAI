@@ -12,6 +12,18 @@ from os.path import join, basename, dirname, exists
 from os import walk, makedirs
 from shutil import copyfile, rmtree
 
+
+def rich_unicode_data_modules():
+    """rich loads its unicode tables through importlib with dashed file names."""
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.find_spec("rich._unicode_data")
+    locations = list(getattr(spec, "submodule_search_locations", None) or [])
+    if not locations:
+        return []
+    return sorted(f"rich._unicode_data.{path.stem}"
+                  for path in Path(locations[0]).glob("unicode*.py"))
+
 # ==================== 打包配置选项 ====================
 
 # 是否收集 CUDA provider（客户端通常不需要）
@@ -25,6 +37,9 @@ INCLUDE_CUDA_PROVIDER = False
 # 初始化空列表
 binaries = []
 hiddenimports = []
+
+# rich 通过 importlib 动态加载 unicode 表（文件名带减号），静态分析看不到
+hiddenimports += rich_unicode_data_modules()
 datas = []
 
 # 收集 sherpa_onnx 相关文件（客户端不需要，但保持一致性）
@@ -171,12 +186,14 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='CapsWriter-Offline-Client',
+    name='SAI-Client',
 )
 
 
 # 复制额外所需的文件（只复制用户自己写的文件）
 my_files = [
+    'assets/icon.ico',
+    'assets/icon-recording.ico',
     'config_client.py',
     'core_client.py',
     'hot.txt',
@@ -214,7 +231,7 @@ from platform import system
 from subprocess import run
 
 if system() == 'Windows':
-    link_folders = ['assets', 'core', 'LLM', 'docs', 'log']
+    link_folders = ['core', 'LLM', 'docs', 'log']
     for folder in link_folders:
         if not exists(folder):
             continue

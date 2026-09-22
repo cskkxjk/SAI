@@ -29,7 +29,7 @@ def check_model() -> None:
     if model_type == 'openai_api':
         from core.api_transcription_config import validate_api_settings
         validate_api_settings(Config.asr_api_base_url, Config.asr_api_model,
-                              Config.asr_api_timeout)
+                              Config.asr_api_timeout, Config.asr_api_allow_http)
         return
     logger.debug(f"检查模型文件, 类型: {model_type}")
 
@@ -78,7 +78,7 @@ def check_model() -> None:
     - 'qwen_asr'
 
         ''', style='bright_red')
-        if not os.environ.get('CAPSWRITER_GUI'):
+        if not os.environ.get('SAI_GUI'):
             input('按回车退出')
         sys.exit(1)
 
@@ -111,7 +111,7 @@ def check_model() -> None:
         error_msg += '\n'
         
         logger.error(error_msg)
-        if not os.environ.get('CAPSWRITER_GUI'):
+        if not os.environ.get('SAI_GUI'):
             input('按回车退出')
         sys.exit(1)
 

@@ -50,9 +50,19 @@ class OnnxSession:
             self.model_path, sess_options=options, providers=providers,
         )
 
+    @staticmethod
+    def _describe(exc):
+        """显卡驱动返回的报错文本是本机语言，pybind 按 UTF-8 解码会失败。"""
+        message = str(exc).strip()
+        if isinstance(exc, UnicodeDecodeError) or "codec can't decode" in message:
+            return ("显卡驱动返回的报错文本无法解码（非 UTF-8），"
+                    "通常是驱动或 ONNX Runtime 不支持该模型的算子")
+        return message
+
     def _fallback(self, exc):
-        logger.warning("[ONNX] %s GPU failed; retrying on CPU: %s",
-                       Path(self.model_path).name, exc)
+        logger.warning("[ONNX] %s GPU 不可用，已回退 CPU 运行: %s",
+                       Path(self.model_path).name, self._describe(exc))
+        logger.debug("[ONNX] GPU 执行失败详情", exc_info=True)
         self._session = None
         self._gpu_active = False
         self._session = self._create(["CPUExecutionProvider"])

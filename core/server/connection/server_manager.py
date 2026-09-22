@@ -74,8 +74,8 @@ class SocketManager:
 
             # 4. 进入识别结果发送循环 (作为主阻塞任务)
             logger.info("WebSocket 发送协程已就绪")
-            if os.environ.get("CAPSWRITER_READY_FILE"):
-                Path(os.environ["CAPSWRITER_READY_FILE"]).touch()
+            if os.environ.get("SAI_READY_FILE"):
+                Path(os.environ["SAI_READY_FILE"]).touch()
             await ws_send(self.app)
             
         self._is_running = False

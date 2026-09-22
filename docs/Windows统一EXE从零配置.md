@@ -14,14 +14,14 @@
 在 PowerShell 中执行：
 
 ```powershell
-git clone git@github.com:cskkxjk/CapsWriter-Offline.git
-cd CapsWriter-Offline
+git clone git@github.com:cskkxjk/SAI.git
+cd SAI
 ```
 
 如果 SSH 未配置，可使用：
 
 ```powershell
-git clone https://github.com/cskkxjk/CapsWriter-Offline.git
+git clone https://github.com/cskkxjk/SAI.git
 ```
 
 ## 3. 一键准备和构建
@@ -95,14 +95,14 @@ python -m PyInstaller --noconfirm build-desktop.spec
 成功后只需要使用：
 
 ```text
-dist/CapsWriter-Offline/CapsWriter.exe
+dist/SAI/SAI.exe
 ```
 
-请整体保留 `dist/CapsWriter-Offline` 文件夹，不能只复制 EXE。该文件夹中包含运行库、模型、配置和托盘图标。
+请整体保留 `dist/SAI` 文件夹，不能只复制 EXE。该文件夹中包含运行库、模型、配置和托盘图标。
 
 ## 7. 启动和选择麦克风
 
-1. 双击 `dist/CapsWriter-Offline/CapsWriter.exe`。
+1. 双击 `dist/SAI/SAI.exe`。
 2. 在“录音设备”下拉框中选择麦克风。
 3. 点击“刷新设备”可重新读取 Windows 当前设备。
 4. 优先选择名称后标有 `Windows WASAPI` 的入口。
@@ -118,15 +118,15 @@ dist/CapsWriter-Offline/CapsWriter.exe
 - 按 `F8` 开始录音，再按一次 `F8` 停止。
 - 也支持鼠标侧键 `X2`。
 
-如果目标程序以管理员权限运行，CapsWriter 也需要以管理员权限运行，Windows 才允许向该程序模拟输入。
+如果目标程序以管理员权限运行，SAI 也需要以管理员权限运行，Windows 才允许向该程序模拟输入。
 
 ## 9. 排错
 
 日志位于：
 
 ```text
-dist/CapsWriter-Offline/logs/server_latest.log
-dist/CapsWriter-Offline/logs/client_latest.log
+dist/SAI/logs/server_latest.log
+dist/SAI/logs/client_latest.log
 ```
 
 看到 `Vulkan0` 和显卡名称表示 GGUF 正在使用 Vulkan。看到 DirectML 动态形状错误时，程序会自动回退 CPU；Qwen INT4 编码器在 Windows 上会自动使用 CPU，GGUF 解码仍可使用 Vulkan。

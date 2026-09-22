@@ -85,16 +85,28 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(resolve_input_device(saved, devices), 9)
         self.assertIsNone(resolve_input_device(None, devices))
 
-    def test_physical_devices_prefer_wasapi_endpoint(self):
+    def test_physical_devices_drop_non_wasapi_duplicates(self):
         devices = [
             {"index": 0, "name": "USB Mic", "hostapi": "MME", "channels": 1},
             {"index": 7, "name": "USB Mic", "hostapi": "Windows WASAPI", "channels": 2},
             {"index": 8, "name": "Other Mic", "hostapi": "Windows DirectSound", "channels": 1},
         ]
         result = physical_input_devices(devices)
-        self.assertEqual([d["name"] for d in result], ["USB Mic", "Other Mic"])
+        self.assertEqual([d["name"] for d in result], ["USB Mic"])
         self.assertEqual(result[0]["index"], 7)
         self.assertEqual(result[0]["hostapi"], "Windows WASAPI")
+
+    def test_physical_devices_only_show_wasapi_endpoints_when_available(self):
+        devices = [
+            {"index": 0, "name": "Microsoft Sound Mapper - Input", "hostapi": "MME", "channels": 2},
+            {"index": 1, "name": "Mic", "hostapi": "MME", "channels": 2},
+            {"index": 7, "name": "Mic", "hostapi": "Windows DirectSound", "channels": 2},
+            {"index": 17, "name": "Mic", "hostapi": "Windows WASAPI", "channels": 2},
+            {"index": 18, "name": "Headset", "hostapi": "Windows WASAPI", "channels": 1},
+        ]
+        result = physical_input_devices(devices)
+        self.assertEqual([d["name"] for d in result], ["Headset", "Mic"])
+        self.assertEqual({d["hostapi"] for d in result}, {"Windows WASAPI"})
 
     def test_missing_microphone_does_not_silently_switch(self):
         with self.assertRaises(ValueError):
@@ -113,11 +125,50 @@ class RegressionTests(unittest.TestCase):
              patch("core.client.audio.stream.sd.InputStream") as stream:
             self.assertIs(manager.start(), stream.return_value)
             resolve.assert_called_once_with(selected)
-            query.assert_called_once_with(15, kind="input")
+            query.assert_any_call(15, kind="input")
             self.assertEqual(stream.call_args.kwargs["device"], 15)
             stream.return_value.start.assert_called_once()
             manager.stop()
             stream.return_value.close.assert_called_once()
+
+    def test_stream_falls_back_to_another_host_api_of_the_same_mic(self):
+        from sounddevice import PortAudioError
+
+        app = SimpleNamespace(state=SimpleNamespace(stream=None))
+        manager = AudioStreamManager(app)
+        manager.keep_open = False
+        self.addCleanup(manager.shutdown)
+        selected = {"index": 15, "name": "USB Mic", "hostapi": "WASAPI"}
+        devices = [
+            {"index": 15, "name": "USB Mic", "hostapi": "Windows WASAPI",
+             "max_input_channels": 2, "default_samplerate": 48000},
+            {"index": 3, "name": "USB Mic", "hostapi": "Windows DirectSound",
+             "max_input_channels": 2, "default_samplerate": 48000},
+        ]
+        handles = []
+
+        def open_stream(samplerate, blocksize, device, **kwargs):
+            if device == 15:
+                raise PortAudioError("Error opening InputStream: Invalid sample rate")
+            handle = Mock()
+            handles.append(handle)
+            return handle
+
+        def query(index=None, kind=None):
+            return next((item for item in devices if item["index"] == index),
+                        devices[0])
+
+        with patch.object(ClientConfig, "audio_device", selected), \
+             patch("core.client.audio.stream.input_devices", return_value=devices), \
+             patch("core.client.audio.stream.resolve_capture_device", return_value=15), \
+             patch("core.client.audio.stream.sd.query_devices", side_effect=query), \
+             patch("core.client.audio.stream.sd.InputStream", side_effect=open_stream):
+            opened = manager.start()
+            self.assertEqual(len(handles), 1)
+            self.assertIs(opened, handles[0])
+            opened.start.assert_called_once()
+            manager.stop()
+            opened.close.assert_called_once()
 
     def test_gpu_runtime_failure_retries_once(self):
         session = OnnxSession.__new__(OnnxSession)
@@ -135,6 +186,11 @@ class RegressionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 session.run(None, {})
             create.assert_called_once()
+
+    def test_gpu_fallback_explains_undecodable_driver_messages(self):
+        failure = UnicodeDecodeError("utf-8", b"\xd3", 0, 1, "invalid continuation byte")
+        self.assertIn("无法解码", OnnxSession._describe(failure))
+        self.assertEqual(OnnxSession._describe(ValueError("普通错误")), "普通错误")
 
     def test_raw_waveform_schema(self):
         encoder = AudioEncoder.__new__(AudioEncoder)
@@ -207,6 +263,63 @@ class RegressionTests(unittest.TestCase):
         self.assertFalse(task.pressed)
         handler.handle_keydown("x2", task)
         self.assertEqual(task.launch.call_count, 2)
+
+    def test_recording_state_toggles_the_tray_icon(self):
+        from core.client.state import ClientState
+        app = SimpleNamespace(tray=Mock())
+        state = ClientState(app=app)
+        state.start_recording(1.0)
+        state.stop_recording()
+        self.assertEqual(
+            [call.args[0] for call in app.tray.set_recording.call_args_list],
+            [True, False])
+
+    def test_recording_flag_file_tracks_the_recording_state(self):
+        from core.client.state import ClientState
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / ".recording-client"
+            with patch.dict("os.environ", {"SAI_RECORDING_FLAG": str(flag)}):
+                state = ClientState(app=SimpleNamespace(tray=None))
+                state.start_recording(1.0)
+                self.assertTrue(flag.exists())
+                state.stop_recording()
+                self.assertFalse(flag.exists())
+
+    def test_launcher_tray_indicator_follows_the_flag_file(self):
+        import gui_launcher
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / ".recording-client"
+            launcher = gui_launcher.Launcher.__new__(gui_launcher.Launcher)
+            launcher.tray_icon = SimpleNamespace(icon="blue", title="tray")
+            launcher.tray_images = {False: "blue", True: "red"}
+            launcher.tray_recording = False
+            launcher.recording_files = {"client": flag}
+            launcher._refresh_recording_indicator()
+            self.assertEqual(launcher.tray_icon.icon, "blue")
+            flag.write_text("1", encoding="utf-8")
+            launcher._refresh_recording_indicator()
+            self.assertEqual(launcher.tray_icon.icon, "red")
+            self.assertIn("录音", launcher.tray_icon.title)
+            flag.unlink()
+            launcher._refresh_recording_indicator()
+            self.assertEqual(launcher.tray_icon.icon, "blue")
+            self.assertEqual(launcher.tray_icon.title, gui_launcher.APP_TITLE)
+
+    def test_tray_icon_switches_between_idle_and_recording(self):
+        from core.ui import tray
+        system = tray._TraySystem.__new__(tray._TraySystem)
+        system.title = "SAI Client"
+        system.recording = False
+        system.images = {False: "blue", True: "red"}
+        system.icon = SimpleNamespace(icon="blue", title="SAI Client")
+        system.set_recording(True)
+        self.assertEqual(system.icon.icon, "red")
+        self.assertIn("录音", system.icon.title)
+        system.set_recording(True)
+        self.assertEqual(system.icon.icon, "red")
+        system.set_recording(False)
+        self.assertEqual(system.icon.icon, "blue")
+        self.assertEqual(system.icon.title, "SAI Client")
 
 
 if __name__ == "__main__":

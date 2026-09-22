@@ -15,8 +15,8 @@ class InstallerPathsTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.app = self.root / "Program Files" / "CapsWriter"
-        self.data = self.root / "LocalAppData" / "CapsWriterOffline"
+        self.app = self.root / "Program Files" / "SAI"
+        self.data = self.root / "LocalAppData" / "SAI"
         self.app.mkdir(parents=True)
         self.env = patch.dict(os.environ, {"LOCALAPPDATA": str(self.root / "LocalAppData")})
         self.env.start()
@@ -24,7 +24,7 @@ class InstallerPathsTests(unittest.TestCase):
         self.override = patch.dict(os.environ)
         self.override.start()
         self.addCleanup(self.override.stop)
-        os.environ.pop("CAPSWRITER_DATA_DIR", None)
+        os.environ.pop("SAI_DATA_DIR", None)
 
     def test_portable_uses_executable_directory(self):
         self.assertEqual(data_directory(self.app), self.app)
@@ -34,7 +34,7 @@ class InstallerPathsTests(unittest.TestCase):
         self.assertEqual(data_directory(self.app), self.data)
 
     def test_explicit_test_directory_is_supported(self):
-        with patch.dict(os.environ, {"CAPSWRITER_DATA_DIR": str(self.root / "test")}):
+        with patch.dict(os.environ, {"SAI_DATA_DIR": str(self.root / "test")}):
             self.assertEqual(data_directory(self.app), self.root / "test")
 
     def test_first_run_copies_defaults_without_copying_models(self):

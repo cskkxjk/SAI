@@ -20,35 +20,24 @@ def _gui_value(name, default):
         return default
 
 
+DEFAULT_SHORTCUTS = [
+    {
+        'key': 'caps_lock',
+        'type': 'keyboard',
+        'suppress': True,
+        'hold_mode': True,
+        'enabled': True,
+    },
+]
+
+
 # 客户端配置
 class ClientConfig:
     addr = '127.0.0.1'          # Server 地址
     port = '6016'               # Server 端口
 
     # 快捷键配置列表
-    shortcuts = [
-        {
-            'key': 'caps_lock',     # 监听大写锁定键
-            'type': 'keyboard',     # 是键盘快捷键
-            'suppress': True,      # 阻塞按键（短按会补发）
-            'hold_mode': True,      # 长按模式
-            'enabled': True         # 启用此快捷键
-        },
-        {
-            'key': 'x2',
-            'type': 'mouse',
-            'suppress': True,
-            'hold_mode': True,
-            'enabled': True
-        },
-        {
-            'key': 'f8',
-            'type': 'keyboard',
-            'suppress': True,
-            'hold_mode': False,
-            'enabled': True
-        },
-    ]
+    shortcuts = _gui_value('shortcuts', DEFAULT_SHORTCUTS)
 
     threshold    = _gui_value('threshold', 0.3)
     audio_device = _gui_value('audio_device', None)

@@ -59,14 +59,15 @@ class TipsDisplay:
         """显示麦克风模式的启动提示"""
         shortcuts_display = _get_shortcuts_display()
 
-        console.rule('[bold #d55252]CapsWriter Offline Client[/]')
+        console.rule('[bold #d55252]SAI Client[/]')
         console.print(f'\n版本：[bold green]{__version__}[/]')
 
         markdown = f'''
 
-项目地址：https://github.com/HaujetZhao/CapsWriter-Offline
+项目地址：https://github.com/cskkxjk/SAI
+上游项目：https://github.com/HaujetZhao/CapsWriter-Offline
 
-**CapsWriter-Offline** 是一个专为 Windows 打造的**完全离线**语音输入工具。
+**SAI** 是一个专为 Windows 打造的**完全离线**语音输入工具。
 
 使用步骤：
 
@@ -88,7 +89,7 @@ class TipsDisplay:
 
 注意事项：
 
-1. 当前快捷键：`{shortcuts_display}`，可在 `config.py` 中修改。
+1. 当前快捷键：`{shortcuts_display}`，可在 GUI 的「快捷键」卡片中修改。
 2. 如需在管理员权限运行的程序（如任务管理器、游戏）中输入，请**以管理员权限运行客户端**。
 3. 识别结果默认去除末尾逗句号。
 4. 录音保存功能：若检测到 `FFmpeg`，会以 `mp3` 压缩保存；否则保存为 `wav` 。
@@ -108,7 +109,8 @@ class TipsDisplay:
         """显示文件转录模式的启动提示"""
         console.print(f'\n版本：[bold green]{__version__}[/]')
 
-        markdown = '\n项目地址：https://github.com/HaujetZhao/CapsWriter-Offline'
+        markdown = ('\n项目地址：https://github.com/cskkxjk/SAI'
+                    '\n上游项目：https://github.com/HaujetZhao/CapsWriter-Offline')
         console.print(Markdown(markdown), highlight=True)
         console.print(f'当前基文件夹：[cyan underline]{os.getcwd()}[/]')
         console.print(f'服务端地址： [cyan underline]{Config.addr}:{Config.port}[/]')

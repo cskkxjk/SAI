@@ -1,16 +1,16 @@
 # Windows Installer
 
 The installer is built from a clean Python 3.14 / llama.cpp b10621 portable build.
-It does not package the existing `dist/CapsWriter-Offline` user directory.
+It does not package the existing `dist/SAI` user directory.
 
 ```powershell
 uv sync --locked --group build
 uv run --locked --group build python -m PyInstaller --noconfirm --distpath build/installer-stage build-desktop.spec
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\CapsWriter.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\SAI.iss
 ```
 
 The compiler path depends on where Inno Setup was installed.
-Output: `dist/installer/CapsWriter-Offline-2.7.0-Setup.exe`.
+Output: `dist/installer/SAI-2.7.0-Setup.exe`.
 This single-file installer contains the program and runtime, but no model weights.
 Old `Setup-*.bin` files are no longer needed.
 
@@ -25,7 +25,7 @@ Downloaded models are not registered as installer files and are retained on
 uninstall; remove the models directory manually if it is no longer needed.
 
 The installer ships factory configuration only. At first launch, the application
-copies defaults into `%LOCALAPPDATA%\CapsWriterOffline` if files are missing.
+copies defaults into `%LOCALAPPDATA%\SAI` if files are missing.
 Existing settings, hotwords, LLM role files and recordings are not overwritten.
 Uninstall removes installer-managed program files but retains the user data directory.
 The portable version continues to keep its data next to the executable.

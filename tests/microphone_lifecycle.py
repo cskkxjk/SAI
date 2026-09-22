@@ -259,7 +259,7 @@ class MicrophoneLifecycleTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(enabled=enabled):
                 app = Mock()
                 with patch.object(ClientConfig, "keep_microphone_open", enabled), \
-                     patch.dict("os.environ", {"CAPSWRITER_READY_FILE": ""}), \
+                     patch.dict("os.environ", {"SAI_READY_FILE": ""}), \
                      patch("core.client.manager.mic_runner.TipsDisplay"), \
                      patch("core.client.output.ResultProcessor") as processor:
                     processor.return_value.start = AsyncMock()

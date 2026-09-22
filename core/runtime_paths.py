@@ -9,14 +9,43 @@ from pathlib import Path
 APP_DIR = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
            else Path(__file__).resolve().parents[1])
 
+DATA_DIR_NAME = "SAI"
+LEGACY_DATA_DIR_NAMES = ("CapsWriterOffline",)
+
+
+def _adopt_data_dir(legacy, target):
+    """Move the pre-rename data directory, falling back to a plain copy."""
+    try:
+        legacy.rename(target)
+        return True
+    except OSError:
+        pass
+    try:
+        shutil.copytree(legacy, target, dirs_exist_ok=True)
+        return True
+    except OSError:
+        return False
+
 
 def data_directory(app_dir=APP_DIR):
-    override = os.environ.get("CAPSWRITER_DATA_DIR")
+    override = os.environ.get("SAI_DATA_DIR")
     if override:
         return Path(override).resolve()
-    if (app_dir / "installed.flag").is_file():
-        return Path(os.environ["LOCALAPPDATA"]) / "CapsWriterOffline"
-    return app_dir
+    if not (app_dir / "installed.flag").is_file():
+        return app_dir
+    local_app_data = Path(os.environ["LOCALAPPDATA"])
+    target = local_app_data / DATA_DIR_NAME
+    if target.exists():
+        return target
+    for name in LEGACY_DATA_DIR_NAMES:
+        legacy = local_app_data / name
+        if not legacy.is_dir():
+            continue
+        if _adopt_data_dir(legacy, target):
+            return target
+        # Keep using the old directory when it cannot be moved or copied.
+        return legacy
+    return target
 
 
 DATA_DIR = data_directory()

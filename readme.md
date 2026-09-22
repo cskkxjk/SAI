@@ -1,11 +1,25 @@
-# CapsWriter-Offline
+# SAI
 
 ![demo](assets/demo.png)
 
-> **按住 CapsLock 说话，松开就上屏。就这么简单。**
+> **按住快捷键说话，松开就上屏。默认 CapsLock，可在图形界面里自由改键。**
 
-**CapsWriter-Offline** 是一个专为 Windows 打造的语音输入工具，默认使用本地模型，
-也支持可选的 OpenAI 兼容语音转写 API。
+**SAI** 是一个专为 Windows 打造的离线语音输入与 AI 智能体控制工具，
+默认使用本地模型，也支持可选的 OpenAI 兼容语音转写 API。
+
+> [!NOTE]
+> **SAI 是 [CapsWriter-Offline](https://github.com/HaujetZhao/CapsWriter-Offline) 的 Windows 桌面分支。**
+> 上游项目由 [Haujet Zhao](https://github.com/HaujetZhao) 开发，离线识别、热词系统、LLM 角色等
+> 核心能力均来自上游（原项目图标、名称与版权归上游所有）。本分支在其基础上重做了桌面体验：
+>
+> - 全新的图形启动器：识别设置、录音、快捷键、模型文件、热词与替换、语音 API、设备检测
+>   集中在同一窗口，美术风格参考 [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev)
+> - 一键安装包：开始菜单/桌面快捷方式、卸载入口，安装目录与用户数据分离
+> - 快捷键可自由修改（键盘组合键、鼠标侧键），不再局限于 CapsLock
+> - 内置模型下载与校验、硬件检测与建议配置、远端 OpenAI 兼容 API 转写
+> - 热词、别名与正则替换规则可直接在图形界面内编辑并保存
+>
+> 版权与授权说明见 [LICENSE](LICENSE) 与文末「致谢」。
 
 ## ✨ 核心特性
 
@@ -31,14 +45,17 @@
 1. **服务地址**：例如 `https://api.openai.com/v1`，或兼容服务的 `/v1` 地址。
 2. **模型名称**：例如 `whisper-1`，以服务端实际支持的模型名为准。
 3. **API Key**：保存在当前用户数据目录的 `config_gui.json` 中；也可以留空并使用
-   环境变量 `CAPSWRITER_ASR_API_KEY`。
+   环境变量 `SAI_ASR_API_KEY`。
 4. **请求超时**：默认 60 秒。
+5. **允许明文 HTTP**：仅用于可信局域网服务（例如 `http://192.168.1.10:8000/v1`），
+   默认关闭；开启后该地址允许使用 HTTP，并且不走系统代理直连。
 
-远程地址要求使用 HTTPS；本机开发服务可使用 `http://127.0.0.1`、
-`http://localhost` 或 `http://[::1]`。启用时程序会再次确认，因为录音和上下文提示
-会离开本机，服务商可能按请求收费。该模式沿用现有分段策略，长录音可能在松键前就提交
-片段，不是实时流式接口；网络延迟会影响最终文字出现时间。失败不自动重试，
-以避免重复计费。API 没有提供时间戳时，字幕时间仅为估算，不适合精确对齐。
+远程地址默认要求使用 HTTPS；本机服务可使用 `http://127.0.0.1`、`http://localhost` 或
+`http://[::1]`。访问局域网 HTTP 服务时请开启“允许明文 HTTP”。本机和局域网地址始终
+绕过系统代理直连，避免开了代理后访问不到内网服务。启用 API 模式时程序会再次确认，
+因为录音和上下文提示会离开本机，服务商可能按请求收费。该模式沿用现有分段策略，长录音
+可能在松键前就提交片段，不是实时流式接口；网络延迟会影响最终文字出现时间。失败不自动
+重试，以避免重复计费。API 没有提供时间戳时，字幕时间仅为估算，不适合精确对齐。
 
 服务必须支持语音转写，不是只有 `/chat/completions` 就能使用。上下文作为可选 `prompt`
 提交，语言自动检测时不发送 `language`；若服务不支持这些可选字段，可清空上下文、
@@ -47,7 +64,7 @@
 安装包不包含模型。首次打开后，在“识别设置”
 将识别模型切换为“OpenAI 兼容 API”，填写参数后“保存并启动”。
 
-**CapsWriter-Offline** 的精髓在于：**完全离线**（不受网络限制）、**响应极快**、**高准确率** 且 **高度自定义**。我追求的是一种「如臂使指」的流畅感，让它成为一个专属的一体化输入利器。无需安装，一个U盘就能带走，随插随用，保密电脑也能用。
+**SAI** 的精髓在于：**完全离线**（不受网络限制）、**响应极快**、**高准确率** 且 **高度自定义**。我追求的是一种「如臂使指」的流畅感，让它成为一个专属的一体化输入利器。无需安装，一个U盘就能带走，随插随用，保密电脑也能用。
 
 以下为支持的模型：
 
@@ -89,7 +106,7 @@
 
 [LazyTyper](https://lazytyper.com/) 和 [闪电说](https://shandianshuo.cn/) 也是很优秀的作品，都有离线引擎，都支持 Windows Linux 与 MacOS，并都有漂亮的图形化页面，推荐使用。
 
-CapsWriter 的特别之处在于追求：
+SAI 的特别之处在于追求：
 
 - 无感输入
 - 完全离线，不受网络约束
@@ -103,12 +120,12 @@ CapsWriter 的特别之处在于追求：
 
 #### 使用安装向导
 
-安装包位于 `dist/installer`，运行 `CapsWriter-Offline-2.7.0-Setup.exe`。
+安装包位于 `dist/installer`，运行 `SAI-2.7.0-Setup.exe`。
 这是不含模型的单文件安装包，只需复制 Setup.exe，不再需要旁边的 `.bin` 文件。
 安装过程不下载模型；首次使用本地识别时，在程序配置页从 ModelScope 按需下载。
 
 1. 选择安装语言，接受许可证。
-2. 选择安装路径，默认是当前用户的 `%LOCALAPPDATA%\Programs\CapsWriter Offline`。
+2. 选择安装路径，默认是当前用户的 `%LOCALAPPDATA%\Programs\SAI`。
 3. 安装程序和运行库，不需要预先选择或准备模型。
 4. 选择开始菜单目录，可勾选创建桌面快捷方式，点击“安装”。
 5. 启动后在“识别设置”选择模型，检查“状态”，缺少文件时点击“下载模型”。
@@ -152,7 +169,7 @@ Vulkan 或系统内存不足时先试 SenseVoice CPU。NVIDIA 预加速默认不
 安装版已经包含 Python 和推理库，不需要安装 Python、Git 或 uv。
 它是当前用户安装，不默认请求管理员权限；自选目录必须是当前用户可写的位置。
 可以通过 Windows“已安装的应用”或开始菜单中的卸载入口卸载。
-程序设置、热词、LLM 角色和录音保存在 `%LOCALAPPDATA%\CapsWriterOffline`，
+程序设置、热词、LLM 角色和录音保存在 `%LOCALAPPDATA%\SAI`，
 托盘菜单“打开数据目录”可以打开它；更新和卸载不会删除这些个人数据。
 
 旧便携版数据不会自动迁移。退出新旧两版并做好备份后，将旧版的 `config_gui.json`、
@@ -161,10 +178,10 @@ Vulkan 或系统内存不足时先试 SenseVoice CPU。NVIDIA 预加速默认不
 安装包未配置代码签名，发布者身份提示不能作为已签名发行版看待。
 
 下面是从用户 fork 构建 Windows 统一版 EXE 的完整流程。构建完成后，日常使用只需要双击一个
-`CapsWriter.exe`，不需要分别启动服务端和客户端。
+`SAI.exe`，不需要分别启动服务端和客户端。
 
 这是目录式便携版，不是单文件安装包。只想在另一台电脑上使用时，可以复制完整的
-`dist/CapsWriter-Offline` 文件夹，无需安装 Python 或 Git；仍需满足下面的 Windows
+`dist/SAI` 文件夹，无需安装 Python 或 Git；仍需满足下面的 Windows
 运行环境要求，并在新电脑上重新选择录音设备。
 
 Git 仓库只提供源码、构建配置和说明，不包含 EXE、模型、llama.cpp DLL 或你的录音。
@@ -188,15 +205,15 @@ AMD、NVIDIA 和 Intel 显卡都可以运行。GGUF 解码器使用随 llama.cpp
 #### 2. 克隆 fork
 
 ```powershell
-git clone git@github.com:cskkxjk/CapsWriter-Offline.git
-cd CapsWriter-Offline
+git clone git@github.com:cskkxjk/SAI.git
+cd SAI
 ```
 
 如果本机还没有配置 GitHub SSH Key，可以改用：
 
 ```powershell
-git clone https://github.com/cskkxjk/CapsWriter-Offline.git
-cd CapsWriter-Offline
+git clone https://github.com/cskkxjk/SAI.git
+cd SAI
 ```
 
 #### 3. 创建 Python 3.14 环境并安装锁定依赖
@@ -309,14 +326,14 @@ libomp.dll
 成功后，统一入口位于：
 
 ```text
-dist/CapsWriter-Offline/CapsWriter.exe
+dist/SAI/SAI.exe
 ```
 
-请整体保留 `dist/CapsWriter-Offline` 文件夹，不能只复制单个 EXE。构建程序会把源码中的
+请整体保留 `dist/SAI` 文件夹，不能只复制单个 EXE。构建程序会把源码中的
 `core`、`assets`、配置文件和 LLM 角色目录一起复制到发布目录，但不复制模型。
 
 可以把该文件夹复制到另一台 Windows x64 电脑，或整体压缩传输，解压后直接打开 EXE。
-不要仅发送 `CapsWriter.exe`；`internal` 是 Python 和第三方运行库，`core` 是程序代码，
+不要仅发送 `SAI.exe`；`internal` 是 Python 和第三方运行库，`core` 是程序代码，
 `models` 是模型，`assets` 是界面资源，`LLM` 保存润色角色配置，均应随包保留。
 
 **重新构建时保护旧数据：** `--noconfirm` 可能直接替换同名发布目录。
@@ -326,13 +343,13 @@ dist/CapsWriter-Offline/CapsWriter.exe
 .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --distpath dist-next build-desktop.spec
 ```
 
-先确认 `dist-next/CapsWriter-Offline/CapsWriter.exe` 能正常运行，再退出旧程序并迁移自己的
+先确认 `dist-next/SAI/SAI.exe` 能正常运行，再退出旧程序并迁移自己的
 `config_gui.json`、热词文件和需要保留的按年录音目录。不要用旧 `core`、`internal`
 覆盖新程序；手工改过的 `config_client.py`、`config_server.py` 应比较后迁移配置。
 再次构建时也不要重复覆盖已经在使用的 `dist-next`，应另选空目录。
 
-**关于两层 dist 目录：** 当前规范入口是 `dist/CapsWriter-Offline/CapsWriter.exe`。
-如果外层另有旧的 `dist/CapsWriter.exe`、`dist/config_gui.json`，确认没有使用且无需保留后
+**关于两层 dist 目录：** 当前规范入口是 `dist/SAI/SAI.exe`。
+如果外层另有旧的 `dist/SAI.exe`、`dist/config_gui.json`，确认没有使用且无需保留后
 可以删除。内层整个文件夹不是重复文件，而是当前完整程序。
 需要平铺时，先退出程序、处理外层同名旧文件，再把内层所有内容一起移动到 `dist`；
 EXE 和相邻资源必须保持相对位置。下次构建仍会生成内层目录，不会跟随手工搬移。
@@ -354,19 +371,19 @@ EXE 和相邻资源必须保持相对位置。下次构建仍会生成内层目�
 
 ```powershell
 .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --distpath build/installer-stage build-desktop.spec
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\CapsWriter.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\SAI.iss
 ```
 
 Inno Setup 安装路径不同时，请把第二条命令改成实际 `ISCC.exe` 路径。
 安装包不需要任何模型文件。输出在 `dist/installer`，只有一个 Setup.exe。
-旧版遗留的 `CapsWriter-Offline-2.7.0-Setup-*.bin` 不再使用，新版生成成功后可删除。
+旧版遗留的 `SAI-2.7.0-Setup-*.bin` 不再使用，新版生成成功后可删除。
 不要使用含个人日志、录音、API 密钥的旧发布目录作为安装包源；
 默认配置来自 `installer/config_gui.json`，首次安装不会继承本机的麦克风设备选择。
 
 打包后可执行离线诊断，不会录音或模拟键盘输入：
 
 ```powershell
-.\build\installer-stage\CapsWriter-Offline\CapsWriter.exe --self-test
+.\build\installer-stage\SAI\SAI.exe --self-test
 ```
 
 结果保存在数据目录的 `logs/self-test.json`。可加 `--model sensevoice --audio C:\path\sample.wav`
@@ -374,7 +391,7 @@ Inno Setup 安装路径不同时，请把第二条命令改成实际 `ISCC.exe` 
 
 #### 7. 第一次启动和配置
 
-1. 双击 `dist\CapsWriter-Offline\CapsWriter.exe`。
+1. 双击 `dist\SAI\SAI.exe`。
 2. 在“识别模型”下拉框中选择模型。
 3. 查看模型下方的“建议”和“状态”文字：
    - Qwen3-ASR：适合多语言和复杂口述，推荐有独显的电脑。
@@ -406,7 +423,7 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 表格创建的条目由程序保存为 `hot-rule.txt` 内的 `@literal` 数据，不需要手工编辑。
 升级程序时请连同 `core` 目录一起更新；旧版本不认识这种条目。
 
-- “热词与别名（高级）”：每行 `目标词 | 别名`，例如 `CapsWriter | 卡普斯赖特`，
+- “热词与别名（高级）”：每行 `目标词 | 别名`，例如 `SAI | 卡普斯赖特`，
   用于发音相近的纠错；这不是严格的逐字匹配。
 - “正则规则（高级）”：每行 `查找内容 = 替换内容`，等号两侧保留空格，
   例如 `欧拉玛 = Ollama`。查找内容支持正则表达式；普通标点如 `.` 需写成 `\.`。
@@ -416,7 +433,7 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
   未启动时会在下次启动加载。“文字替换”和“正则规则（高级）”共用一份文件；
   热词别名单独保存，关闭时会提醒未保存的修改。
 - 便携版文件保存在 EXE 同目录的 `hot.txt` 和 `hot-rule.txt`；
-  安装版保存在 `%LOCALAPPDATA%\CapsWriterOffline`，不是源码目录；
+  安装版保存在 `%LOCALAPPDATA%\SAI`，不是源码目录；
   保存前会检查规则格式、正则和文件是否被其他程序修改。
 
 - 默认按需开启麦克风，松键或取消即关闭，空闲时不占用设备。
@@ -424,12 +441,13 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 - 此类设备若需要即按即说，可勾选“快速响应（空闲时持续占用麦克风）”并保存重启：
   启动时短暂预热，之后保持采集，但空闲音频直接丢弃、不保存、不发送；
   只有按键录音期间的音频会进入识别。此模式下 Windows 显示麦克风正在使用是正常现象。
-- 按住 `CapsLock` 说话，松开后自动识别并输入到当前获得焦点的输入框。
+- 按住快捷键（默认 `CapsLock`）说话，松开后自动识别并输入到当前获得焦点的输入框；
+  快捷键可在配置页的「快捷键」卡片里改成任意键盘组合键或鼠标侧键。
 - 按一下 `F8` 开始录音，再按一下 `F8` 停止录音并输入文字。
 - 也支持鼠标侧键 `X2`。
-- 目标程序如果以管理员身份运行，CapsWriter 也需要以管理员身份运行，才能向目标窗口模拟输入。
+- 目标程序如果以管理员身份运行，SAI 也需要以管理员身份运行，才能向目标窗口模拟输入。
 
-识别服务、录音客户端和配置界面都由同一个 `CapsWriter.exe` 管理。不要再单独运行旧的
+识别服务、录音客户端和配置界面都由同一个 `SAI.exe` 管理。不要再单独运行旧的
 `start_server.py`、`start_client.py` 或旧版 `dist-v*` 目录。
 
 
@@ -451,20 +469,29 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 
 | 改动 | 说明 |
 | --- | --- |
-| Windows 统一入口 | `gui_launcher.py` 提供配置窗口、模型检查、服务启动和托盘管理，最终由 `CapsWriter.exe` 统一运行 |
+| 桌面图形界面 | 侧边导航 + 卡片式布局：常规设置、语音 API、设备检测、热词与替换集中在同一窗口，美术风格参考 clash-verge-rev |
+| 一键安装包 | Inno Setup 安装程序，写入开始菜单/桌面快捷方式与卸载入口，安装目录与用户数据分离，并提供 `SAI.exe --self-test` 自检 |
+| 可改快捷键 | 快捷键采集控件支持键盘组合键与鼠标侧键，默认 CapsLock 长按录音，可在界面中随时更换 |
+| Windows 统一入口 | `gui_launcher.py` 提供配置窗口、模型检查、服务启动和托盘管理，最终由 `SAI.exe` 统一运行 |
+| 热词与替换编辑器 | 表格化的文字替换、热词别名与正则规则编辑，可直接在界面内保存并热重载 |
+| 远端 API 转写 | 支持 OpenAI 兼容 `/audio/transcriptions`，可测试连接、允许可信局域网明文 HTTP、本地地址绕过系统代理 |
+| 模型下载与校验 | 内置 ModelScope 下载、进度显示与文件校验，缺失时给出建议并支持取消 |
+| 硬件检测 | 读取 CPU/内存/显卡/Vulkan/ONNX 后端信息，给出模型与量化建议并一键填入配置 |
 | 录音设备选择 | 配置页读取 Windows 录音设备，保存实际设备名称和接口信息，启动前检查设备是否可用 |
 | 物理麦克风去重 | 合并同一麦克风的 MME、DirectSound、WASAPI、WDM-KS 端点，并优先选择 WASAPI |
-| 快捷键输入 | 支持 CapsLock 长按录音、松开输入，以及 F8 开始/停止录音 |
 | 麦克风生命周期 | 默认松键释放设备；可选快速响应模式，空闲音频不保存、不发送；专用 COM 线程修复 Windows 设备打开失败 |
 | 音频完整性 | 修复缓存切换丢帧，跳过全零录音和 `/sil` 输出，防止按住快捷键时反复失败重试 |
-| 可视化替换 | 表格添加、修改、删除文字替换；保留高级正则和热词别名，保存后自动重载 |
 | GPU 容错 | 自动尝试可用的 DirectML/Vulkan 后端；GPU 初始化或推理失败时回退 CPU |
 | GGUF/ONNX 兼容 | 增加 Qwen3-ASR、Fun-ASR-Nano 的模型接口和不同导出格式的兼容处理 |
 | 发布构建 | `build-desktop.spec` 将代码、运行库、模型、配置和托盘资源整理为统一发布目录 |
 
+> 命名说明：本分支由 CapsWriter-Offline 派生，由于快捷键已可自由修改，品牌更名为 **SAI**，
+> 并启用了新的应用图标；代码中的 `SAI.exe`、`%LOCALAPPDATA%\SAI` 等均对应原
+> `CapsWriter.exe`、`%LOCALAPPDATA%\CapsWriterOffline`，首次启动会自动迁移旧数据目录。
+
 ## ⚙️ 个性化配置
 
-首次使用和日常修改优先通过 `CapsWriter.exe` 配置页完成：模型、识别语言、推理后端、
+首次使用和日常修改优先通过 `SAI.exe` 配置页完成：模型、识别语言、推理后端、
 录音设备、输出方式和 GPU 选项都可以在界面中保存。高级用户仍可以编辑发布目录中的
 `config_server.py`、`config_client.py`、`hot.txt` 和 `hot-rule.txt`。
 
@@ -473,7 +500,7 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 
 
 **Q: 为什么按了没反应？**  
-A: 确认已经双击统一入口 `dist\CapsWriter-Offline\CapsWriter.exe`，并在配置页点击
+A: 确认已经双击统一入口 `dist\SAI\SAI.exe`，并在配置页点击
 “保存并启动”。启动成功后主窗口会隐藏到托盘，右键托盘图标可以查看状态或退出。
 
 **Q: 为什么识别结果没字？**  
@@ -484,46 +511,37 @@ A: 统一 EXE 默认不显示黑色控制台窗口，启动成功后配置窗口
 
 **Q: 如何开机启动？**  
 A: `Win+R` 输入 `shell:startup` 打开启动文件夹，将
-`dist\CapsWriter-Offline\CapsWriter.exe` 的快捷方式放进去即可。
+`dist\SAI\SAI.exe` 的快捷方式放进去即可。
 
 **Q: 如何修改快捷键？**
-A: 默认使用 CapsLock 长按录音、松开输入，F8 单击开始/停止。高级用户可以编辑
-`config_client.py` 中的 `ClientConfig.shortcuts`；`hold_mode=True` 是按住说话，
-`hold_mode=False` 是单击开始、再次单击停止。
+A: 打开配置页，在「快捷键」卡片点击按键标签后直接按新的键盘组合键或鼠标侧键即可，
+设置会随「保存设置」写入配置。仍支持按住说话（`hold_mode=True`）与单击开始/停止两种模式；
+高级用户也可以直接编辑 `config_client.py` 中的 `ClientConfig.shortcuts`。
 
 **Q: Windows 如何使用统一图形界面？**
-A: 构建 `build-desktop.spec` 后，双击 `dist/CapsWriter-Offline/CapsWriter.exe`，在配置页
+A: 构建 `build-desktop.spec` 后，双击 `dist/SAI/SAI.exe`，在配置页
 选择模型和录音设备，点击“保存并启动”。成功后窗口会隐藏到托盘。
 
 更多问题请参阅 [docs/常见问题.md](docs/常见问题.md)。
 
 
-## 🚀 我的其他优质项目推荐
-
-| 项目名称 | 说明 | 体验地址 |
-| :--- | :--- | :--- |
-| [**IME_Indicator**](https://github.com/HaujetZhao/IME_Indicator) | Windows 输入法中英状态指示器 | [下载即用](https://github.com/HaujetZhao/IME_Indicator/releases/latest/download/IME-Indicator.exe) |
-| [**Rust-Tray**](https://github.com/HaujetZhao/Rust-Tray) | 将控制台最小化到托盘图标的工具 | [下载即用](https://github.com/HaujetZhao/Rust-Tray/releases/latest/download/Tray.exe) |
-| [**Gallery-Viewer**](https://github.com/HaujetZhao/Gallery-Viewer-HTML) | 网页端图库查看器，纯 HTML 实现 | [点击即用](https://haujetzhao.github.io/Gallery-Viewer-HTML/) |
-| [**全景图片查看器**](https://github.com/HaujetZhao/Panorama-Viewer-HTML) | 单个网页实现全景照片、视频查看 | [点击即用](https://haujetzhao.github.io/Panorama-Viewer-HTML/) |
-| [**图标生成器**](https://github.com/HaujetZhao/Font-Awesome-Icon-Generator-HTML) | 使用 Font-Awesome 生成网站 Icon | [点击即用](https://haujetzhao.github.io/Font-Awesome-Icon-Generator-HTML/) |
-| [**五笔编码反查**](https://github.com/HaujetZhao/wubi86-revert-query) | 86 五笔编码在线反查 | [点击即用](https://haujetzhao.github.io/wubi86-revert-query/) |
-| [**快捷键映射图**](https://github.com/HaujetZhao/ShortcutMapper_Chinese) | 可视化、交互式的快捷键映射图 (中文版) | [点击即用](https://haujetzhao.github.io/ShortcutMapper_Chinese/) |
-
-
 ## ❤️ 致谢
 
-本项目基于以下优秀的开源项目：
+本分支（SAI）派生自 [**CapsWriter-Offline**](https://github.com/HaujetZhao/CapsWriter-Offline)，
+原作者为 [Haujet Zhao](https://github.com/HaujetZhao)。离线 ASR 引擎、音素热词检索、
+文本合并、LLM 角色等核心实现均来自上游，原项目名称、图标与版权归上游所有；
+本分支在其基础上重做了 Windows 桌面体验并更名为 SAI，详见
+[LICENSE](LICENSE)（保留上游版权声明）与上文「本 fork 的主要改动」。
+
+本项目还基于以下优秀的开源项目：
 
 -   [Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx)
 -   [FunASR](https://github.com/alibaba-damo-academy/FunASR)
 
-感谢 Google Antigravity、Anthropic Claude、GLM、DeepSeek，如果不是这些编程助手，许多功能（例如基于音素的热词检索算法）我是无力实现的。
+界面（配色、卡片与侧边导航布局）参考了 [**Clash Verge Rev**](https://github.com/clash-verge-rev/clash-verge-rev)，
+特此致谢。
 
-特别感谢那些慷慨解囊的捐助者，你们的捐助让我用在了购买这些优质的 AI 编程助手服务，并最终将这些成果反馈到了软件的更新里。
+感谢 Codex 与 opencode，本分支的桌面界面重做、安装包构建与各项 Windows 适配大量借助它们完成。
 
-
-如果觉得好用，欢迎点个 Star 或者打赏支持：
-
-
-![sponsor](assets/sponsor.jpg)	
+如果这个分支对你有帮助，欢迎在 [本仓库](https://github.com/cskkxjk/SAI) 点个 Star；
+也请多多支持上游项目 [CapsWriter-Offline](https://github.com/HaujetZhao/CapsWriter-Offline)。

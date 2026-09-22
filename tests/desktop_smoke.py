@@ -53,10 +53,10 @@ def run(root, audio_path, models, provider="AUTO", cpu_llm=False):
                           llm_use_gpu=not cpu_llm, child_tray=False)
             config_path.write_text(json.dumps(config), encoding="utf-8")
             ready = root / "logs" / f".smoke-{uuid.uuid4().hex}"
-            env = dict(os.environ, CAPSWRITER_GUI="1",
-                       CAPSWRITER_READY_FILE=str(ready))
+            env = dict(os.environ, SAI_GUI="1",
+                       SAI_READY_FILE=str(ready))
             process = subprocess.Popen(
-                [str(root / "CapsWriter.exe"), "--server"], cwd=root, env=env,
+                [str(root / "SAI.exe"), "--server"], cwd=root, env=env,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             started = time.monotonic()
@@ -100,7 +100,7 @@ def run(root, audio_path, models, provider="AUTO", cpu_llm=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1] /
-                        "dist/CapsWriter-Offline")
+                        "dist/SAI")
     parser.add_argument("--audio", type=Path, required=True)
     parser.add_argument("--provider", default="AUTO")
     parser.add_argument("--cpu-llm", action="store_true")

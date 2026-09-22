@@ -60,7 +60,8 @@ class EngineFactory:
             from .openai_asr import APIConfig, OpenAIASREngine
             return OpenAIASREngine(APIConfig(
                 Config.asr_api_base_url, Config.asr_api_model,
-                Config.asr_api_key, Config.asr_api_timeout))
+                Config.asr_api_key, Config.asr_api_timeout,
+                Config.asr_api_allow_http))
         if model_type not in EngineFactory._ASR_LOADERS:
             raise ValueError(f"EngineFactory: 不支持的 ASR 类型 '{model_type}'")
 

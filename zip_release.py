@@ -4,8 +4,8 @@
 打包脚本 - 使用 7zip 压缩 dist 目录中的构建产物
 
 功能：
-1. 打包 CapsWriter-Offline（服务端+客户端）
-2. 打包 CapsWriter-Offline-Client（仅客户端）
+1. 打包 SAI（服务端+客户端）
+2. 打包 SAI-Client（仅客户端）
 3. 智能排除模型文件（.onnx, .dll, .json 等），但保留说明文档
 """
 
@@ -38,6 +38,7 @@ def should_include_file(file_path, is_client_only=False):
     判断文件是否应该被打包
 
     打包规则：
+    - 路径相对于构建产物根目录，顶层 assets 仅包含 icon.ico 与 icon-recording.ico
     - 所有文件，除了 models/模型名/子目录/... 的内容
     - models/模型名/文件 会被打包（层级深度 == 2）
     - models/模型名/子目录/文件  不会被打包（层级深度 >= 3）
@@ -46,6 +47,9 @@ def should_include_file(file_path, is_client_only=False):
     """
     path = Path(file_path)
     parts = path.parts
+
+    if parts and parts[0] == 'assets':
+        return parts in (('assets', 'icon.ico'), ('assets', 'icon-recording.ico'))
 
     # 1. 客户端特殊排除逻辑
     if is_client_only:
@@ -96,7 +100,7 @@ def create_file_list(dist_folder, output_file='file_list.txt', is_client_only=Fa
 
         for filename in filenames:
             file_path = os.path.join(root, filename)
-            if should_include_file(file_path, is_client_only):
+            if should_include_file(Path(file_path).relative_to(dist_path), is_client_only):
                 # 计算相对于 dist 父目录的路径
                 rel_path = os.path.relpath(file_path, dist_path.parent)
                 files.append(rel_path)
@@ -204,7 +208,7 @@ def main():
         return
 
     print("=" * 60)
-    print("CapsWriter-Offline 打包脚本")
+    print("SAI 打包脚本")
     print("=" * 60)
 
     # 构建输出目录
@@ -216,21 +220,21 @@ def main():
     # 打包配置列表
     packages = []
 
-    # 检查 CapsWriter-Offline（服务端+客户端）
-    server_dist = dist_dir / 'CapsWriter-Offline'
+    # 检查 SAI（服务端+客户端）
+    server_dist = dist_dir / 'SAI'
     if server_dist.exists():
         packages.append({
             'source': server_dist,
-            'output': release_dir / f'CapsWriter-Offline-{timestamp}.zip',
+            'output': release_dir / f'SAI-{timestamp}.zip',
             'name': '服务端+客户端'
         })
 
-    # 检查 CapsWriter-Offline-Client（仅客户端）
-    client_dist = dist_dir / 'CapsWriter-Offline-Client'
+    # 检查 SAI-Client（仅客户端）
+    client_dist = dist_dir / 'SAI-Client'
     if client_dist.exists():
         packages.append({
             'source': client_dist,
-            'output': release_dir / f'CapsWriter-Offline-Client-{timestamp}.zip',
+            'output': release_dir / f'SAI-Client-{timestamp}.zip',
             'name': '仅客户端'
         })
 
@@ -255,7 +259,7 @@ def main():
             list_file_name = f'file_list_{idx}.txt'
 
             # 生成文件列表
-            is_client_only = pkg['source'].name == 'CapsWriter-Offline-Client'
+            is_client_only = pkg['source'].name == 'SAI-Client'
             files, list_file = create_file_list(pkg['source'], list_file_name, is_client_only)
 
             if not files:

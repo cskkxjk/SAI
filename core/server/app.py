@@ -1,6 +1,6 @@
 # coding: utf-8
 """
-CapsWriter Offline 服务端主程序门面类 (Facade)
+SAI 服务端主程序门面类 (Facade)
 
 采用外观模式统一管理进程管理器 (ProcessManager) 和网络管理器 (SocketManager)。
 该类是整个服务端应用的中心指挥部，负责初始化生命周期、托盘图标、
@@ -19,9 +19,9 @@ from .ui.tray_manager import TrayManager
 from . import logger
 from core.runtime_paths import DATA_DIR
 
-class CapsWriterServer:
+class SaiServer:
     """
-    CapsWriter 服务端外观类
+    SAI 服务端外观类
     
     管理的外部接口极其简洁：start()。
     """
@@ -49,9 +49,10 @@ class CapsWriterServer:
     def _print_banner(self):
         """打印启动信息"""
         console.line(2)
-        console.rule('[bold #d55252]CapsWriter Offline Server[/]'); console.line()
+        console.rule('[bold #d55252]SAI Server[/]'); console.line()
         console.print(f'版本：[bold green]{self.version}[/]', end='\n\n')
-        console.print(f'项目地址：[cyan underline]https://github.com/HaujetZhao/CapsWriter-Offline', end='\n\n')
+        console.print('项目地址：[cyan underline]https://github.com/cskkxjk/SAI', end='\n\n')
+        console.print('上游项目：[cyan underline]https://github.com/HaujetZhao/CapsWriter-Offline', end='\n\n')
         console.print(f'当前基文件夹：[cyan underline]{self.base_dir}[/]', end='\n\n')
         console.print(f'绑定的服务地址：[cyan underline]{Config.addr}:{Config.port}[/]', end='\n\n')
 

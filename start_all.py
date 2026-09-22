@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Start the CapsWriter server and client together."""
+"""Start the SAI server and client together."""
 from __future__ import annotations
 
 import os

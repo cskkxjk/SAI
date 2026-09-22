@@ -50,7 +50,7 @@ class MicRunner:
         """麦克风模式主入口"""
         
         logger.info("=" * 50)
-        logger.info(f"CapsWriter Offline Client {__version__} (麦克风模式)")
+        logger.info(f"SAI Client {__version__} (麦克风模式)")
         logger.info(f"日志级别: {Config.log_level}")
         
         # Warm up before enabling shortcuts. No samples are sent or saved.
@@ -60,10 +60,10 @@ class MicRunner:
 
         # 1. 资源启动
         self.start_resources()
-        if os.environ.get("CAPSWRITER_READY_FILE"):
+        if os.environ.get("SAI_READY_FILE"):
             for _ in range(30):
                 if await self.ws_manager.connect():
-                    Path(os.environ["CAPSWRITER_READY_FILE"]).touch()
+                    Path(os.environ["SAI_READY_FILE"]).touch()
                     break
                 await asyncio.sleep(1)
             else:

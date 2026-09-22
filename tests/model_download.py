@@ -49,7 +49,7 @@ class DownloadTests(unittest.TestCase):
         for quant in ("q4_k", "q5_k"):
             (self.root / "config_gui.json").write_text(
                 json.dumps({"qwen_quantization": quant}), encoding="utf-8")
-            env = dict(os.environ, CAPSWRITER_DATA_DIR=str(self.root))
+            env = dict(os.environ, SAI_DATA_DIR=str(self.root))
             result = subprocess.run(
                 [sys.executable, "-c",
                  "from config_server import Qwen3ASRGGUFArgs; print(Qwen3ASRGGUFArgs.llm_fn)"],
@@ -155,7 +155,7 @@ class DownloadTests(unittest.TestCase):
     def test_installer_does_not_bundle_model_sources(self):
         root = Path(__file__).resolve().parents[1]
         spec = (root / "build-desktop.spec").read_text(encoding="utf-8")
-        script = (root / "installer/CapsWriter.iss").read_text(encoding="utf-8")
+        script = (root / "installer/SAI.iss").read_text(encoding="utf-8")
         self.assertNotIn("MODEL_INFO", spec)
         self.assertIn("DiskSpanning=no", script)
         self.assertNotIn('Source: "{#SourceDir}\\models\\', script)

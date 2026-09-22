@@ -1,6 +1,6 @@
-; Compile after building build/installer-stage/CapsWriter-Offline.
+; Compile after building build/installer-stage/SAI.
 #ifndef SourceDir
-  #define SourceDir "..\build\installer-stage\CapsWriter-Offline"
+  #define SourceDir "..\build\installer-stage\SAI"
 #endif
 #ifndef OutputPath
   #define OutputPath "..\dist\installer"
@@ -9,12 +9,12 @@
 
 [Setup]
 AppId={{23100B11-53C4-4AFA-93E6-8C054B16B942}
-AppName=CapsWriter Offline
+AppName=SAI
 AppVersion={#AppVersion}
 AppPublisher=cskkxjk
-AppPublisherURL=https://github.com/cskkxjk/CapsWriter-Offline
-DefaultDirName={localappdata}\Programs\CapsWriter Offline
-DefaultGroupName=CapsWriter Offline
+AppPublisherURL=https://github.com/cskkxjk/SAI
+DefaultDirName={localappdata}\Programs\SAI
+DefaultGroupName=SAI
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -22,16 +22,16 @@ DisableDirPage=no
 DisableProgramGroupPage=no
 WizardStyle=modern
 OutputDir={#OutputPath}
-OutputBaseFilename=CapsWriter-Offline-{#AppVersion}-Setup
+OutputBaseFilename=SAI-{#AppVersion}-Setup
 SetupIconFile=..\assets\icon.ico
-UninstallDisplayIcon={app}\CapsWriter.exe
+UninstallDisplayIcon={app}\SAI.exe
 LicenseFile=..\LICENSE
 Compression=lzma2/fast
 SolidCompression=no
 DiskSpanning=no
 CloseApplications=yes
 RestartApplications=no
-AppMutex=Local\CapsWriterOfflineDesktop
+AppMutex=Local\SAIDesktop
 SetupLogging=yes
 Uninstallable=yes
 ChangesAssociations=no
@@ -44,16 +44,18 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "models\*,logs\*,20*\*,__pycache__\*,config_gui.json"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "assets\*,models\*,logs\*,20*\*,__pycache__\*,config_gui.json"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\assets\icon.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
+Source: "{#SourceDir}\assets\icon-recording.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "installed.flag"; DestDir: "{app}"; Flags: ignoreversion
 Source: "config_gui.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\CapsWriter Offline"; Filename: "{app}\CapsWriter.exe"; WorkingDir: "{app}"
-Name: "{group}\Uninstall CapsWriter Offline"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\CapsWriter Offline"; Filename: "{app}\CapsWriter.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{group}\SAI"; Filename: "{app}\SAI.exe"; WorkingDir: "{app}"
+Name: "{group}\Uninstall SAI"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\SAI"; Filename: "{app}\SAI.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\CapsWriter.exe"; Description: "启动 CapsWriter Offline"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\SAI.exe"; Description: "启动 SAI"; Flags: nowait postinstall skipifsilent
 
 ; User data lives outside {app}; no UninstallDelete entries for it.

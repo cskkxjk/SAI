@@ -50,6 +50,7 @@ class ServerConfig:
     asr_api_model = _gui_value('asr_api_model', 'whisper-1')
     asr_api_key = _gui_value('asr_api_key', '')
     asr_api_timeout = _gui_value('asr_api_timeout', 60)
+    asr_api_allow_http = _gui_value('asr_api_allow_http', False)
 
     format_num = True       # 输出时是否将中文数字转为阿拉伯数字
     format_spell = True     # 输出时是否调整中英之间的空格
@@ -62,7 +63,7 @@ class ServerConfig:
     aligner_idle_timeout = 10  # 对齐引擎空闲多少秒后自动释放显存 (0 表示不释放)
 
     # GPU 预加速配置（有识别任务时，提前调高显存频率，降低延迟，需管理员权限运行）
-    gpu_boost_enabled = model_type != 'openai_api' and _gui_value('gpu_boost_enabled', False)
+    gpu_boost_enabled = False
     gpu_boost_cmd = 'nvidia-smi -lmc 9000'      # GPU 预加速命令，锁定显存频率到9000MHz（根据实际 GPU 调整）
     gpu_unboost_cmd = 'nvidia-smi -rmc'         # GPU 取消预加速命令，恢复显存到默认频率
     gpu_unboost_timeout = 1                     # 空闲多少秒后取消加速

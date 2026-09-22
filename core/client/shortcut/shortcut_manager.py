@@ -25,7 +25,7 @@ from core.client.shortcut.task import ShortcutTask
 if TYPE_CHECKING:
     from core.client.shortcut.shortcut_config import Shortcut
     from core.client.state import ClientState
-    from core.client.app import CapsWriterClient
+    from core.client.app import SaiClient
 
 
 
@@ -37,7 +37,7 @@ class ShortcutManager:
     所有事件处理都在 win32_event_filter 中完成，确保高性能和低延迟。
     """
 
-    def __init__(self, app: CapsWriterClient, shortcuts: List[Shortcut]):
+    def __init__(self, app: SaiClient, shortcuts: List[Shortcut]):
         """
         初始化快捷键管理器
 
@@ -54,6 +54,7 @@ class ShortcutManager:
 
         # 快捷键任务映射（key -> ShortcutTask）
         self.tasks: Dict[str, ShortcutTask] = {}
+        self._pressed_keys = set()
 
         # 线程池
         self._pool = ThreadPoolExecutor(max_workers=4)
@@ -89,6 +90,18 @@ class ShortcutManager:
             task.threshold = shortcut.get_threshold(Config.threshold)
             self.tasks[shortcut.key] = task
 
+    def _combo_active(self, parts) -> bool:
+        aliases = {
+            "ctrl": {"ctrl", "ctrl_l", "ctrl_r"},
+            "alt": {"alt", "alt_l", "alt_r", "alt_gr"},
+            "shift": {"shift", "shift_l", "shift_r"},
+            "win": {"win", "win_l", "win_r", "cmd", "cmd_l", "cmd_r"},
+        }
+        return all(
+            bool(self._pressed_keys.intersection(aliases.get(part, {part})))
+            for part in parts
+        )
+
     # ========== 监听器创建 ==========
 
     def create_keyboard_filter(self):
@@ -106,20 +119,42 @@ class ShortcutManager:
             if self._check_restoring(key_name, msg):
                 return True
 
-            # 查找匹配的快捷键
-            if key_name not in self.tasks:
-                return True
-
-            task = self.tasks[key_name]
-
-            # 处理按键事件
             if msg in KEY_DOWN_MESSAGES:
-                self._event_handler.handle_keydown(key_name, task)
+                self._pressed_keys.add(key_name)
+                matched = []
+                for task in self.tasks.values():
+                    if task.shortcut.type != "keyboard":
+                        continue
+                    parts = frozenset(task.shortcut.key.split("+"))
+                    if key_name in self._pressed_keys and self._combo_active(parts):
+                        self._event_handler.handle_keydown(task.shortcut.key, task)
+                        matched.append(task)
+                suppress = any(task.shortcut.suppress for task in matched)
             elif msg in KEY_UP_MESSAGES:
-                self._event_handler.handle_keyup(key_name, task)
+                matched = []
+                for task in self.tasks.values():
+                    if task.shortcut.type != "keyboard":
+                        continue
+                    parts = frozenset(task.shortcut.key.split("+"))
+                    key_matches = key_name in parts or any(
+                        key_name in aliases for part in parts
+                        for aliases in ({
+                            "ctrl": {"ctrl_l", "ctrl_r"},
+                            "alt": {"alt_l", "alt_r", "alt_gr"},
+                            "shift": {"shift_l", "shift_r"},
+                            "win": {"win_l", "win_r", "cmd_l", "cmd_r"},
+                        }.get(part, {part}))
+                    )
+                    if key_matches and task.pressed:
+                        self._event_handler.handle_keyup(task.shortcut.key, task)
+                        matched.append(task)
+                self._pressed_keys.discard(key_name)
+                suppress = any(task.shortcut.suppress for task in matched)
+            else:
+                suppress = False
 
             # 阻塞事件
-            if task.shortcut.suppress and self.keyboard_listener:
+            if suppress and self.keyboard_listener:
                 self.keyboard_listener.suppress_event()
 
             return True

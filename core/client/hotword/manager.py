@@ -162,13 +162,27 @@ class HotwordManager:
         return self._observer
 
     def stop_file_watcher(self) -> None:
-        """停止文件监视"""
+        """停止文件监视（不无限等待，避免退出时卡死）"""
         if self._is_watcher_started and self._observer:
-            self._observer.stop()
-            self._observer.join()
+            observer = self._observer
+            waiter = threading.Thread(target=self._stop_observer, args=(observer,),
+                                      daemon=True)
+            waiter.start()
+            waiter.join(timeout=5)
+            if waiter.is_alive():
+                logger.warning("热词文件监视线程未能及时退出，跳过等待")
             self._is_watcher_started = False
             self._observer = None
             logger.debug("热词文件监视已停止")
+
+    @staticmethod
+    def _stop_observer(observer) -> None:
+        """watchdog 的 stop() 内部会 join 发射线程，放到子线程里避免卡住主线程。"""
+        try:
+            observer.stop()
+            observer.join()
+        except RuntimeError:
+            pass
 
 
 class _HotwordFileHandler(FileSystemEventHandler):

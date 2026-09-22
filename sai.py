@@ -27,24 +27,24 @@ def main():
     role = next((r for r in ("server", "client") if f"--{r}" in sys.argv), None)
     # Spawned workers enter freeze_support before the normal role dispatch.
     # Give them real streams so exceptions don't open invisible error dialogs.
-    prepare_streams(DATA_DIR, role or os.environ.get("CAPSWRITER_ROLE", "desktop"))
+    prepare_streams(DATA_DIR, role or os.environ.get("SAI_ROLE", "desktop"))
     multiprocessing.freeze_support()
     if "--self-test" in sys.argv:
         from core.desktop_selftest import run
         return run()
     if role:
-        os.environ["CAPSWRITER_ROLE"] = role
+        os.environ["SAI_ROLE"] = role
         sys.argv.remove(f"--{role}")
         for stream in (sys.stdout, sys.stderr):
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8", errors="replace")
         try:
             if role == "server":
-                from core.server.app import CapsWriterServer
-                CapsWriterServer().start()
+                from core.server.app import SaiServer
+                return SaiServer().start()
             else:
-                from core.client.app import CapsWriterClient
-                CapsWriterClient().start()
+                from core.client.app import SaiClient
+                return SaiClient().start()
         except Exception:
             traceback.print_exc()
             return 1

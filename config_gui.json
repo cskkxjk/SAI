@@ -2,7 +2,6 @@
   "model_type": "fun_asr_nano",
   "onnx_provider": "AUTO",
   "llm_use_gpu": true,
-  "gpu_boost_enabled": false,
   "language": "auto",
   "threshold": 0.3,
   "context": "",

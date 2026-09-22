@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import requests
 
-from core.api_transcription_config import validate_api_settings
+from core.api_transcription_config import bypass_proxy, validate_api_settings
 from .base import BaseASREngine, EngineCapabilities, RecognitionStream
 
 
@@ -17,6 +17,7 @@ class APIConfig:
     model: str
     api_key: str = field(default="", repr=False)
     timeout: float = 60
+    allow_http: bool = False
 
 
 class APIStream(RecognitionStream):
@@ -35,8 +36,9 @@ class OpenAIASREngine(BaseASREngine):
     def __init__(self, config):
         super().__init__(config)
         self.base_url, self.model, self.timeout = validate_api_settings(
-            config.base_url, config.model, config.timeout)
-        self.key = config.api_key.strip() or os.environ.get("CAPSWRITER_ASR_API_KEY", "")
+            config.base_url, config.model, config.timeout, config.allow_http)
+        self.direct = bypass_proxy(self.base_url, config.allow_http)
+        self.key = config.api_key.strip() or os.environ.get("SAI_ASR_API_KEY", "")
 
     @property
     def capabilities(self):
@@ -74,17 +76,21 @@ class OpenAIASREngine(BaseASREngine):
             response = requests.post(
                 endpoint, headers=headers, data=data,
                 files={"file": ("recording.wav", buf.getvalue(), "audio/wav")},
-                timeout=(min(10, self.timeout), self.timeout), allow_redirects=False)
-        except requests.Timeout:
-            raise RuntimeError("语音 API 请求超时，请检查服务或增加超时时间") from None
-        except requests.RequestException:
-            raise RuntimeError("语音 API 连接失败，请检查地址、网络和证书") from None
+                timeout=(min(10, self.timeout), self.timeout), allow_redirects=False,
+                proxies={"http": None, "https": None} if self.direct else None)
+        except requests.Timeout as exc:
+            raise RuntimeError(
+                f"语音 API 请求超时（{endpoint}）：{exc}；请检查服务或增加超时时间") from None
+        except requests.RequestException as exc:
+            raise RuntimeError(
+                f"语音 API 连接失败（{endpoint}）：{exc.__class__.__name__}: {exc}"
+                "；请检查地址端口、网络和证书") from None
         try:
             if response.status_code != 200:
                 hints = {401: "密钥无效", 403: "无访问权限", 404: "地址或模型不存在",
                          413: "录音过长", 429: "额度不足或请求过于频繁"}
                 hint = hints.get(response.status_code, "服务请求失败")
-                raise RuntimeError(f"语音 API HTTP {response.status_code}：{hint}")
+                raise RuntimeError(f"语音 API HTTP {response.status_code}（{endpoint}）：{hint}")
             try:
                 body = response.json()
             except ValueError:

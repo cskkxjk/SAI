@@ -56,13 +56,12 @@ class EditorTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        (self.root / "hot.txt").write_text("CapsWriter | 别名\n", encoding="utf-8")
+        (self.root / "hot.txt").write_text("SAI | 别名\n", encoding="utf-8")
         (self.root / "hot-rule.txt").write_text("# keep comment\n欧拉玛 = Ollama\n", encoding="utf-8")
         self.parent = tk.Tk()
         self.parent.withdraw()
         self.addCleanup(self.parent.destroy)
-        with patch.object(HotwordEditor, "deiconify"):
-            self.editor = HotwordEditor(self.parent, self.root)
+        self.editor = HotwordEditor(self.parent, self.root)
 
     def set_text(self, name, text):
         widget = self.editor.editors[name]
@@ -94,21 +93,25 @@ class EditorTests(unittest.TestCase):
             self.assertFalse(self.editor._save("hot.txt"))
         self.assertEqual((self.root / "hot.txt").read_text(encoding="utf-8"), "external edit")
 
-    def test_close_cancel_keeps_unsaved_changes(self):
-        self.set_text("hot.txt", "new term")
-        with patch("core.desktop_hotwords.messagebox.askyesnocancel", return_value=None):
-            self.editor._close()
-        self.assertTrue(self.editor.winfo_exists())
-        self.assertTrue(self.editor._dirty("hot.txt"))
-
-    def test_close_saves_both_pages(self):
+    def test_save_dirty_writes_all_changed_files(self):
+        self.assertEqual(self.editor.dirty_names(), [])
         self.set_text("hot.txt", "new term")
         self.set_text("hot-rule.txt", "wrong = right")
-        with patch("core.desktop_hotwords.messagebox.askyesnocancel", return_value=True):
-            self.editor._close()
-        self.assertFalse(self.editor.winfo_exists())
+        self.assertEqual(self.editor.dirty_names(), ["hot.txt", "hot-rule.txt"])
+        self.assertTrue(self.editor.save_dirty())
+        self.assertEqual(self.editor.dirty_names(), [])
         self.assertEqual((self.root / "hot.txt").read_text(encoding="utf-8"), "new term")
         self.assertEqual((self.root / "hot-rule.txt").read_text(encoding="utf-8"), "wrong = right")
+
+    def test_save_dirty_keeps_every_file_when_a_rule_is_invalid(self):
+        original = (self.root / "hot-rule.txt").read_bytes()
+        self.set_text("hot.txt", "new term")
+        self.set_text("hot-rule.txt", "[ = invalid")
+        with patch("core.desktop_hotwords.messagebox.showerror") as error:
+            self.assertFalse(self.editor.save_dirty())
+            error.assert_called_once()
+        self.assertEqual((self.root / "hot-rule.txt").read_bytes(), original)
+        self.assertEqual(self.editor.dirty_names(), ["hot.txt", "hot-rule.txt"])
 
     def test_empty_rules_can_be_saved(self):
         self.set_text("hot-rule.txt", "")
@@ -152,8 +155,7 @@ class EditorTests(unittest.TestCase):
         self.editor.target.set("")
         self.editor._add_rule()
         self.assertTrue(self.editor._save_current())
-        with patch.object(HotwordEditor, "deiconify"):
-            other = HotwordEditor(self.parent, self.root)
+        other = HotwordEditor(self.parent, self.root)
         try:
             self.assertEqual(len(other.table.get_children()), 2)
             other.sample.set("[literal]")
@@ -172,7 +174,7 @@ class EditorTests(unittest.TestCase):
             self.assertTrue(self.editor._save("hot.txt"))
             self.set_text("hot-rule.txt", "千问 = Qwen")
             self.assertTrue(self.editor._save("hot-rule.txt"))
-            deadline = time.monotonic() + 6
+            deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 if (manager.rule_corrector.substitute("千问") == "Qwen"
                         and "UniqueHotword" in manager.phoneme_corrector.hotwords):

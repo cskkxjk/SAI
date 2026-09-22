@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import TYPE_CHECKING, Optional, Dict, Any
 if TYPE_CHECKING:
     import sounddevice as sd
     from websockets.legacy.client import WebSocketClientProtocol
-    from .app import CapsWriterClient
+    from .app import SaiClient
 
 from rich.console import Console
 from rich.theme import Theme
@@ -57,7 +58,7 @@ class ClientState:
     queue_out: asyncio.Queue = field(default_factory=asyncio.Queue)
     websocket: Optional[WebSocketClientProtocol] = None
     stream: Optional[sd.InputStream] = None
-    app: Optional[CapsWriterClient] = None
+    app: Optional[SaiClient] = None
 
     recording: bool = False
     recording_start_time: float = 0.0
@@ -101,6 +102,7 @@ class ClientState:
         # 重置其他状态
         self.recording = False
         self.recording_start_time = 0.0
+        self._update_recording_indicator(False)
         self.audio_files.clear()
         
         logger.debug("客户端状态重置完成")
@@ -114,6 +116,7 @@ class ClientState:
         """
         self.recording = True
         self.recording_start_time = start_time
+        self._update_recording_indicator(True)
         logger.debug(f"录音状态已更新: recording=True, start_time={start_time:.2f}")
     
     def stop_recording(self) -> float:
@@ -129,8 +132,33 @@ class ClientState:
         
         self.recording = False
         self.recording_start_time = 0.0
+        self._update_recording_indicator(False)
         logger.debug(f"录音状态已更新: recording=False, duration={duration:.2f}s")
         return duration
+
+    def _update_recording_indicator(self, active: bool) -> None:
+        """录音状态变化时通知托盘与启动器（未启用时忽略）"""
+        tray = getattr(self.app, 'tray', None)
+        if tray is not None:
+            try:
+                tray.set_recording(active)
+            except Exception as exc:
+                logger.debug(f"更新托盘录音状态失败: {exc}")
+        self._update_recording_flag(active)
+
+    def _update_recording_flag(self, active: bool) -> None:
+        """写入状态文件，让图形界面的托盘图标同步变成红色"""
+        flag = os.environ.get("SAI_RECORDING_FLAG")
+        if not flag:
+            return
+        path = Path(flag)
+        try:
+            if active:
+                path.write_text("1", encoding="utf-8")
+            else:
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug(f"更新录音状态文件失败: {exc}")
     
     @property
     def is_connected(self) -> bool:

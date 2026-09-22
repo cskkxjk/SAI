@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 import base64
 import json
 import time
@@ -26,7 +28,7 @@ from core.tools.token_sync import sync_tokens_from_text
 
 if TYPE_CHECKING:
     from core.client.state import ClientState
-    from core.client.app import CapsWriterClient
+    from core.client.app import SaiClient
 
 
 class FileTranscriber:
@@ -40,7 +42,7 @@ class FileTranscriber:
     4. 调用 ResultHandler 处理结果
     """
     
-    def __init__(self, app: CapsWriterClient, file: Path):
+    def __init__(self, app: SaiClient, file: Path):
         """
         初始化文件转录器
         
@@ -103,7 +105,8 @@ class FileTranscriber:
             process = await asyncio.create_subprocess_exec(
                 *ffmpeg_cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.DEVNULL,
+                creationflags=_NO_WINDOW
             )
             
             # 分块大小：1分钟音频 (16000 * 4 * 60 bytes)

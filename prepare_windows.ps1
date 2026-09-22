@@ -11,4 +11,4 @@ $python = (Resolve-Path ".venv\Scripts\python.exe").Path
 & $python -m PyInstaller --noconfirm build-desktop.spec
 
 Write-Host ""
-Write-Host "完成: dist\CapsWriter-Offline\CapsWriter.exe"
+Write-Host "完成: dist\SAI\SAI.exe"

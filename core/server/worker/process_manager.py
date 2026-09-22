@@ -15,16 +15,16 @@ from . import start_worker
 from .check_model import check_model
 from . import logger
 if TYPE_CHECKING:
-    from ..app import CapsWriterServer
+    from ..app import SaiServer
 
 
 class ProcessManager:
     """
     识别子进程管理器
     
-    由 CapsWriterServer 调用，专注于进程层级的控制。
+    由 SaiServer 调用，专注于进程层级的控制。
     """
-    def __init__(self, app: CapsWriterServer):
+    def __init__(self, app: SaiServer):
         self._process = None
         self.app = app
         self.is_alive = False

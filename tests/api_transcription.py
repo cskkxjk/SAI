@@ -1,6 +1,7 @@
 """Tests for the OpenAI-compatible transcription adapter."""
 import io
 import json
+import os
 import queue
 import threading
 import unittest
@@ -45,6 +46,37 @@ class APITranscriptionTests(unittest.TestCase):
             self.assertEqual(headers["Authorization"], "Bearer test-key")
             self.assertIn(b"RIFF", body)
             self.assertIn(b"test-model", body)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_loopback_ignores_environment_proxy(self):
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"text": "direct"}).encode())
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.dict(os.environ, {
+                    "HTTP_PROXY": "http://127.0.0.1:9",
+                    "http_proxy": "http://127.0.0.1:9",
+                    "NO_PROXY": "", "no_proxy": ""}):
+                engine = OpenAIASREngine(APIConfig(
+                    f"http://127.0.0.1:{server.server_port}/v1", "m", "k", 10))
+                stream = engine.create_stream()
+                stream.accept_waveform(16000, np.zeros(1600, dtype=np.float32))
+                engine.decode_stream(stream)
+            self.assertEqual(stream.result.text, "direct")
         finally:
             server.shutdown()
             server.server_close()
@@ -102,10 +134,49 @@ class APITranscriptionTests(unittest.TestCase):
             validate_api_settings("https://example.test/v1/", "whisper-1", "30"),
             ("https://example.test/v1", "whisper-1", 30.0),
         )
+        self.assertEqual(
+            validate_api_settings("http://localhost:8000/v1", "m", 60),
+            ("http://localhost:8000/v1", "m", 60.0),
+        )
         with self.assertRaises(ValueError):
             validate_api_settings("http://example.test/v1", "x", 60)
         with self.assertRaises(ValueError):
             validate_api_settings("http://127.0.0.1:8000/v1", "", 60)
+
+    def test_validation_allows_trusted_plain_http(self):
+        self.assertEqual(
+            validate_api_settings("http://176.4.88.88/v1/", "m", "60", allow_http=True),
+            ("http://176.4.88.88/v1", "m", 60.0),
+        )
+        with self.assertRaises(ValueError):
+            validate_api_settings("http://176.4.88.88/v1", "m", 60)
+        with self.assertRaises(ValueError):
+            validate_api_settings("http://192.168.1.10:8000/v1", "m", 60)
+
+    @patch("core.server.engines.openai_asr.requests.post")
+    def test_lan_endpoints_bypass_the_system_proxy(self, post):
+        response = post.return_value
+        response.status_code = 200
+        response.json.return_value = {"text": "ok"}
+        direct = {"http": None, "https": None}
+        for url, allow_http in (
+                ("http://176.4.88.88/v1", True),
+                ("http://192.168.1.20:9000/v1", True),
+                ("https://192.168.1.20/v1", False),
+                ("http://127.0.0.1:8000/v1", False)):
+            with self.subTest(url=url):
+                post.reset_mock()
+                engine = OpenAIASREngine(APIConfig(url, "m", "k", 30, allow_http))
+                stream = engine.create_stream()
+                stream.accept_waveform(16000, np.zeros(1600, dtype=np.float32))
+                engine.decode_stream(stream)
+                self.assertEqual(post.call_args.kwargs["proxies"], direct)
+        post.reset_mock()
+        engine = OpenAIASREngine(APIConfig("https://api.openai.com/v1", "m", "k"))
+        stream = engine.create_stream()
+        stream.accept_waveform(16000, np.zeros(1600, dtype=np.float32))
+        engine.decode_stream(stream)
+        self.assertIsNone(post.call_args.kwargs["proxies"])
 
     @patch("core.server.engines.openai_asr.requests.post")
     def test_posts_wav_and_reads_text(self, post):
@@ -116,12 +187,12 @@ class APITranscriptionTests(unittest.TestCase):
             "http://127.0.0.1:8000/v1", "whisper-1", "secret", 12))
         stream = engine.create_stream()
         stream.accept_waveform(16000, np.zeros(1600, dtype=np.float32))
-        engine.decode_stream(stream, context="CapsWriter", language="chinese")
+        engine.decode_stream(stream, context="SAI", language="chinese")
         call = post.call_args
         self.assertEqual(call.args[0], "http://127.0.0.1:8000/v1/audio/transcriptions")
         self.assertEqual(call.kwargs["data"]["model"], "whisper-1")
         self.assertEqual(call.kwargs["data"]["language"], "zh")
-        self.assertEqual(call.kwargs["data"]["prompt"], "CapsWriter")
+        self.assertEqual(call.kwargs["data"]["prompt"], "SAI")
         filename, content, content_type = call.kwargs["files"]["file"]
         self.assertEqual((filename, content_type), ("recording.wav", "audio/wav"))
         with wave.open(io.BytesIO(content), "rb") as wav:

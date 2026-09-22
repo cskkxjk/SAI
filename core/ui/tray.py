@@ -20,6 +20,7 @@ import time
 import threading
 import platform
 import subprocess
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 from typing import Optional
 from . import logger, set_ui_logger
 
@@ -150,7 +151,7 @@ def _is_window_visible(hwnd: int) -> bool:
     return user32.IsWindowVisible(hwnd) != 0
 
 
-def _create_icon(icon_path: Optional[str] = None):
+def _create_icon(icon_path: Optional[str] = None, accent: str = 'blue'):
     """
     创建托盘图标
     
@@ -158,6 +159,7 @@ def _create_icon(icon_path: Optional[str] = None):
     
     Args:
         icon_path: 图标文件路径
+        accent: 动态生成时的配色，'blue' 为待机、'red' 为录音中
         
     Returns:
         PIL Image 对象
@@ -182,7 +184,7 @@ def _create_icon(icon_path: Optional[str] = None):
     image = Image.new('RGBA', (real_size, real_size), (0, 0, 0, 0))
     dc = ImageDraw.Draw(image)
 
-    blue = (55, 118, 171)
+    blue = (55, 118, 171) if accent != 'red' else (196, 52, 44)
     yellow = (255, 211, 67)
     white = (255, 255, 255)
 
@@ -209,7 +211,8 @@ def _create_icon(icon_path: Optional[str] = None):
 class _TraySystem:
     """托盘系统内部类"""
     
-    def __init__(self, name: Optional[str] = None, icon_path: Optional[str] = None, more_options: list = None):
+    def __init__(self, name: Optional[str] = None, icon_path: Optional[str] = None,
+                 more_options: list = None, recording_icon_path: Optional[str] = None):
         # 延迟导入 pystray
         import pystray
         from pystray import MenuItem as item
@@ -217,6 +220,11 @@ class _TraySystem:
         self.hwnd = _get_console_hwnd()
         self.should_exit = False
         self.title = name if name else (os.path.basename(sys.argv[0]) or "Console App")
+        self.recording = False
+        self.images = {
+            False: _create_icon(icon_path, accent='blue'),
+            True: _create_icon(recording_icon_path, accent='red'),
+        }
 
         # 禁用关闭按钮
         if self.hwnd:
@@ -238,10 +246,22 @@ class _TraySystem:
 
         self.icon = pystray.Icon(
             "console_tray",
-            _create_icon(icon_path),
+            self.images[False],
             title=f"{self.title}",
             menu=tuple(menu_items)
         )
+
+    def set_recording(self, active: bool) -> None:
+        """录音开始时换成红色图标（提示正在拾音），结束时恢复。"""
+        active = bool(active)
+        if active == self.recording:
+            return
+        self.recording = active
+        try:
+            self.icon.icon = self.images[active]
+            self.icon.title = f"{self.title} · 正在录音" if active else f"{self.title}"
+        except Exception as exc:
+            logger.debug(f"切换托盘录音图标失败: {exc}")
 
     def toggle_window(self) -> None:
         """切换窗口显示状态"""
@@ -271,7 +291,7 @@ class _TraySystem:
                 cmd = sys.argv
             else:
                 cmd = [sys.executable] + sys.argv
-            subprocess.Popen(cmd)
+            subprocess.Popen(cmd, creationflags=_NO_WINDOW)
         except Exception as e:
             logger.error(f"重启失败: {e}")
             return
@@ -333,7 +353,7 @@ class _TraySystem:
         self.toggle_window()
 
 
-def enable_min_to_tray(name: Optional[str] = None, icon_path: Optional[str] = None, exit_callback=None, more_options: list = None) -> None:
+def enable_min_to_tray(name: Optional[str] = None, icon_path: Optional[str] = None, exit_callback=None, more_options: list = None, recording_icon_path: Optional[str] = None) -> None:
     """
     启用最小化到托盘功能
 
@@ -345,6 +365,7 @@ def enable_min_to_tray(name: Optional[str] = None, icon_path: Optional[str] = No
         icon_path: 图标文件路径，默认动态生成
         exit_callback: 退出回调函数，当用户点击托盘退出菜单时调用
         more_options: 额外菜单项列表，格式为 [(名称, 回调函数), ...]
+        recording_icon_path: 录音中的图标路径，默认动态生成红色图标
     """
     global _tray_instance
 
@@ -373,9 +394,25 @@ def enable_min_to_tray(name: Optional[str] = None, icon_path: Optional[str] = No
         if not _get_console_hwnd():
             return  # 没有控制台窗口
 
-        _tray_instance = _TraySystem(name, icon_path, more_options)
+        _tray_instance = _TraySystem(name, icon_path, more_options, recording_icon_path)
         _tray_instance.start()
 
+
+
+def set_recording(active: bool) -> None:
+    """
+    切换托盘图标的录音指示（录音中显示红色图标）
+
+    Args:
+        active: 是否正在录音
+    """
+    instance = _tray_instance
+    if instance is None:
+        return
+    try:
+        instance.set_recording(active)
+    except Exception as exc:
+        logger.debug(f"更新托盘录音状态失败: {exc}")
 
 
 def stop_tray() -> None:

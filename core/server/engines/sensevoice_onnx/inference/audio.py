@@ -2,6 +2,7 @@ import os
 import math
 import shutil
 import subprocess
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 import numpy as np
 import soundfile as sf
 from pathlib import Path
@@ -107,7 +108,8 @@ def load_audio_ffmpeg(audio_path, sample_rate=16000, start_second=None, duration
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        bufsize=0
+        bufsize=0,
+        creationflags=_NO_WINDOW
     )
 
     raw_bytes, stderr = process.communicate()

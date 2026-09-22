@@ -30,12 +30,14 @@ class TrayManager:
 
         # 获取图标路径
         icon_path = str(APP_DIR / 'assets' / 'icon.ico')
+        recording_icon_path = str(APP_DIR / 'assets' / 'icon-recording.ico')
         
         # 启用托盘
         enable_min_to_tray(
-            'CapsWriter Client',
+            'SAI Client',
             icon_path,
             exit_callback=self.app.stop,
+            recording_icon_path=recording_icon_path,
             more_options=[
                 ('📋 复制结果', self._copy_last_result),
                 ('📁 日记', self._open_diary),
@@ -46,6 +48,17 @@ class TrayManager:
             ]
         )
         logger.info("托盘图标已启用")
+
+    def set_recording(self, active: bool) -> None:
+        """录音状态变化时切换托盘图标颜色"""
+        if not Config.enable_tray:
+            return
+
+        try:
+            from ..ui import set_tray_recording
+            set_tray_recording(active)
+        except Exception as e:
+            logger.debug(f"TrayManager: 更新录音图标时发生错误: {e}")
 
     def stop(self):
         """停止托盘图标"""

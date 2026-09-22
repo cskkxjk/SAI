@@ -2,6 +2,7 @@
 import asyncio
 import shutil
 import subprocess
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 from pathlib import Path
 from typing import List, Optional
 
@@ -46,7 +47,8 @@ class MediaTool:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=_NO_WINDOW
             )
             stdout, stderr = await process.communicate()
             if process.returncode == 0:

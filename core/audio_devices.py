@@ -25,6 +25,18 @@ def input_devices():
 def physical_input_devices(devices=None):
     """Collapse PortAudio host-api endpoints into physical microphone choices."""
     devices = input_devices() if devices is None else devices
+    wasapi_devices = [
+        device for device in devices
+        if device["hostapi"] == "Windows WASAPI"
+        and "microsoft sound mapper" not in device["name"].casefold()
+    ]
+    if wasapi_devices:
+        devices = wasapi_devices
+    else:
+        devices = [
+            device for device in devices
+            if "microsoft sound mapper" not in device["name"].casefold()
+        ]
     grouped = {}
     for device in devices:
         name = " ".join(device["name"].split()).casefold()

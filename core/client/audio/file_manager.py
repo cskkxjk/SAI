@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 import shutil
+import os
+import subprocess
 import tempfile
 import time
 import wave
@@ -91,7 +93,13 @@ class AudioFileManager:
                 '-b:a', '192k',
                 str(file_path),
             ]
-            file_handle = Popen(ffmpeg_command, stdin=PIPE, stdout=DEVNULL, stderr=DEVNULL)
+            creationflags = (
+                subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            )
+            file_handle = Popen(
+                ffmpeg_command, stdin=PIPE, stdout=DEVNULL, stderr=DEVNULL,
+                creationflags=creationflags,
+            )
             logger.debug(f"创建 MP3 文件: {file_path}")
         else:
             # 使用 wave 模块输出 WAV

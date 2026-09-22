@@ -61,7 +61,7 @@ def normalize_text(text: str) -> str:
     规范化文本：驼峰拆分 + 分隔符替换为空格 + 统一小写
     
     这确保：
-    - `CapsWriter` -> `caps writer`
+    - `SAI` -> `caps writer`
     - `iPhone15Pro` -> `iphone 15 pro`
     - `7-Zip` / `7 zip` -> `7 zip`
     """
