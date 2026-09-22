@@ -1,5 +1,5 @@
 {
-  "model_type": "sensevoice",
+  "model_type": "fun_asr_nano",
   "qwen_quantization": "q5_k",
   "onnx_provider": "AUTO",
   "llm_use_gpu": true,

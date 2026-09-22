@@ -70,6 +70,11 @@ class InstallerPathsTests(unittest.TestCase):
         initialize_user_data(self.app, self.app)
         self.assertEqual((self.app / "hot.txt").read_text(), "mine")
 
+    def test_shipped_defaults_match_the_bundled_engine(self):
+        repository = Path(__file__).resolve().parent.parent
+        default = json.loads((repository / "installer" / "config_gui.json").read_text(encoding="utf-8"))
+        self.assertEqual(default["model_type"], "fun_asr_nano")
+
     def test_roles_load_from_user_data_and_reload_without_bytecode_cache(self):
         from core.client.llm.llm_role_loader import RoleLoader
         import config_client
