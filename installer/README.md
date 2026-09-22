@@ -10,7 +10,7 @@ uv run --locked --group build python -m PyInstaller --noconfirm --distpath build
 ```
 
 The compiler path depends on where Inno Setup was installed.
-Output: `dist/installer/SAI-2.7.0-Setup.exe`.
+Output: `dist/installer/SAI-1.0.0-Setup.exe`.
 This single-file installer contains the program and runtime, but no model weights.
 Old `Setup-*.bin` files are no longer needed.
 

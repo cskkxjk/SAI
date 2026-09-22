@@ -5,7 +5,7 @@ from pathlib import Path
 from core.runtime_paths import DATA_DIR
 
 # 版本信息
-__version__ = '2.7.0'
+__version__ = '1.0.0'
 
 # 项目根目录
 BASE_DIR = str(DATA_DIR)
