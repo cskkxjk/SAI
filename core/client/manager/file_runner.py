@@ -1,5 +1,6 @@
 # coding: utf-8
 from __future__ import annotations
+import sys
 from pathlib import Path
 from . import logger
 from config_client import ClientConfig as Config, __version__
@@ -55,8 +56,10 @@ class FileRunner:
                 logger.info(f"文件处理完成: {file}")
             
             logger.info("所有文件已处理完成")
-            
-            input('\n按回车退出\n')
+
+            # Explorer drag-and-drop launches have no usable stdin.
+            if sys.stdin is not None and sys.stdin.isatty():
+                input('\n按回车退出\n')
 
         except Exception as e:
             logger.error(f"文件模式运行异常: {e}", exc_info=True)

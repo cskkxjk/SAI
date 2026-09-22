@@ -322,5 +322,17 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(system.icon.title, "SAI Client")
 
 
+    def test_dropped_media_files_start_file_transcription(self):
+        import sai
+        with tempfile.TemporaryDirectory() as folder:
+            audio = Path(folder) / "meeting.mp4"
+            audio.write_bytes(b"media")
+            self.assertEqual(sai.transcription_request([str(audio)]), [str(audio)])
+            self.assertEqual(sai.dropped_files(["--client", str(audio), folder]), [str(audio)])
+            self.assertEqual(sai.transcription_request(["--self-test", str(audio)]), [])
+            self.assertEqual(sai.transcription_request(["--server", "--client"]), [])
+            self.assertEqual(sai.transcription_request([str(Path(folder) / "missing.wav")]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
