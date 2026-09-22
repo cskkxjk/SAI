@@ -10,13 +10,13 @@ uv run --locked --group build python -m PyInstaller --noconfirm --distpath build
 ```
 
 The compiler path depends on where Inno Setup was installed.
-Output: `dist/installer/SAI-1.0.0-Setup.exe`.
+Output: `dist/installer/SAI-1.0.1-Setup.exe`.
 This single-file installer contains the program and runtime, but no model weights.
 Old `Setup-*.bin` files are no longer needed.
 
 The wizard offers a destination directory, Start Menu shortcuts,
 an optional desktop shortcut and an uninstaller. It installs for the current user
-without requiring administrator privileges. SenseVoice is the default model.
+without requiring administrator privileges. Fun-ASR-Nano is the default model.
 After launch, select a model and use its ModelScope download button. Files are
 downloaded into `models` beside the installed EXE, with size/SHA256 verification.
 The selected installation directory must be writable by the current user.

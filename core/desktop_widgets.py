@@ -597,7 +597,7 @@ class PillButton(tk.Canvas):
 class ShortcutCapture(ttk.Frame):
     """Click once, then press a chord or a mouse button; no type selector."""
 
-    def __init__(self, parent, shortcut, can_capture=lambda: True):
+    def __init__(self, parent, shortcut, can_capture=lambda: True, width=170):
         super().__init__(parent, style="Card.TFrame")
         self.value = dict(shortcut)
         self.can_capture = can_capture
@@ -607,7 +607,7 @@ class ShortcutCapture(ttk.Frame):
         self.events = queue.Queue()
         self.label = tk.StringVar(value=shortcut_label(self.value.get("key", "")))
         self.button = PillButton(self, textvariable=self.label, command=self.begin,
-                                 kind="secondary", width=280, height=34,
+                                 kind="secondary", width=width, height=34,
                                  background=CARD_BG, font=ui_font(9),
                                  padx=10)
         self.button.pack(side="left", fill="x", expand=True)

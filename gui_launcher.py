@@ -93,6 +93,12 @@ MODEL_CHOICES = {
     "sensevoice": "SenseVoice-Small（CPU 低占用，短句输入）",
     "paraformer": "Paraformer（CPU 专用、速度快）",
 }
+CLOSE_CHOICES = {
+    "ask": "每次询问",
+    "tray": "最小化到托盘，继续运行",
+    "exit": "直接退出程序",
+}
+CLOSE_LABELS = {label: key for key, label in CLOSE_CHOICES.items()}
 
 
 class Launcher(tk.Tk):
@@ -125,8 +131,6 @@ class Launcher(tk.Tk):
         self.hardware_busy = False
         self.hardware_info = None
         self.hardware_after = None
-        self.close_action = None
-        self.close_action_remembered = False
         self.status = tk.StringVar(value="未启动")
         self.vars = {
             "model_type": tk.StringVar(value=MODEL_CHOICES["qwen_asr"]),
@@ -139,6 +143,7 @@ class Launcher(tk.Tk):
             "paste": tk.BooleanVar(value=False),
             "audio_device": tk.StringVar(value=DEFAULT_MIC),
             "keep_microphone_open": tk.BooleanVar(value=False),
+            "close_behavior": tk.StringVar(value=CLOSE_CHOICES["ask"]),
             "asr_api_base_url": tk.StringVar(value="https://api.openai.com/v1"),
             "asr_api_model": tk.StringVar(value="whisper-1"),
             "asr_api_key": tk.StringVar(),
@@ -309,9 +314,9 @@ class Launcher(tk.Tk):
             self.saved_audio_device = data.get("audio_device")
             if isinstance(data.get("shortcuts"), list):
                 self.saved_shortcuts = data["shortcuts"]
-            if data.get("close_action") in ("tray", "exit"):
-                self.close_action = data["close_action"]
-                self.close_action_remembered = bool(data.get("close_action_remembered"))
+            if (data.get("close_action") in ("tray", "exit")
+                    and data.get("close_action_remembered")):
+                self.vars["close_behavior"].set(CLOSE_CHOICES[data["close_action"]])
             for key, value in data.items():
                 if key in self.vars:
                     if key == "audio_device":
@@ -322,6 +327,8 @@ class Launcher(tk.Tk):
                         value = "AUTO"
                     elif key == "qwen_quantization" and value not in ("q5_k", "q4_k"):
                         value = "q5_k"
+                    elif key == "close_behavior" and value not in CLOSE_LABELS:
+                        value = CLOSE_CHOICES.get(value, CLOSE_CHOICES["ask"])
                     self.vars[key].set(value)
         except (OSError, ValueError):
             pass
@@ -497,7 +504,6 @@ class Launcher(tk.Tk):
         self._build_recognition_card(body)
         self._build_audio_card(body)
         self._build_shortcut_card(body)
-        self._build_model_card(body)
         self._build_options_card(body)
 
     def _build_recognition_card(self, body):
@@ -505,6 +511,41 @@ class Launcher(tk.Tk):
         row = self._row(form, 0, "识别模型", ttk.Combobox(
             form, textvariable=self.vars["model_type"], state="readonly",
             values=tuple(MODEL_CHOICES.values()), width=42, font=ui_font()))
+        self.quantization_box = ttk.Combobox(
+            form, textvariable=self.vars["qwen_quantization"], state="readonly",
+            values=("q5_k", "q4_k"), width=14, font=ui_font())
+        row = self._row(form, row, "Qwen 量化", self.quantization_box,
+                        hint="Q5_K 适合独立显卡，Q4_K 适合集成显卡或低显存；仅 Qwen3-ASR 使用。")
+        self.model_status = ttk.Label(form, text="", style="Field.TLabel")
+        row = self._row(form, row, "模型状态", self.model_status)
+        self.model_advice = ttk.Label(form, text="", style="Hint.TLabel",
+                                      justify="left")
+        self.model_advice.grid(row=row, column=0, columnspan=2, sticky="w",
+                               pady=(0, 10))
+        self._autowrap(form, self.model_advice, offset=6)
+        row += 1
+        actions = ttk.Frame(form, style="Card.TFrame")
+        actions.grid(row=row, column=0, columnspan=2, sticky="w")
+        self.download_button = PillButton(
+            actions, "下载模型", command=self._download_model, kind="primary",
+            width=112, background=CARD_BG)
+        self.download_button.pack(side="left")
+        self.cancel_download_button = PillButton(
+            actions, "取消下载", command=self.download_cancel.set, kind="secondary",
+            width=96, background=CARD_BG)
+        self.cancel_download_button.pack(side="left", padx=(10, 0))
+        self.cancel_download_button.configure(state="disabled")
+        PillButton(actions, "刷新状态", command=self._update_model_info,
+                   kind="secondary", width=96,
+                   background=CARD_BG).pack(side="left", padx=(10, 0))
+        self.download_progress = ttk.Progressbar(form, maximum=100)
+        self.download_progress.grid(row=row + 1, column=0, columnspan=2,
+                                    sticky="ew", pady=(12, 0))
+        self.download_progress.grid_remove()
+        row += 2
+        tk.Frame(form, background=DIVIDER, height=1).grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(4, 6))
+        row += 1
         row = self._row(form, row, "推理后端", ttk.Combobox(
             form, textvariable=self.vars["onnx_provider"], state="readonly",
             values=("AUTO", "CPU"), width=14, font=ui_font()),
@@ -536,47 +577,9 @@ class Launcher(tk.Tk):
     def _build_shortcut_card(self, body):
         form = self._card(body, "快捷键")
         shortcut = self.saved_shortcuts[0] if self.saved_shortcuts else DEFAULT_SHORTCUTS[0]
-        self.shortcut_capture = ShortcutCapture(form, shortcut)
-        self.shortcut_capture.pack(fill="x")
-        hint = ttk.Label(
-            form, text="点击按键标签后，直接按键盘组合键或鼠标侧键完成设置，Esc 取消。",
-            style="Hint.TLabel", justify="left")
-        hint.pack(anchor="w", pady=(8, 0))
-        self._autowrap(form, hint)
-
-    def _build_model_card(self, body):
-        form = self._card(body, "模型文件")
-        self.quantization_box = ttk.Combobox(
-            form, textvariable=self.vars["qwen_quantization"], state="readonly",
-            values=("q5_k", "q4_k"), width=14, font=ui_font())
-        row = self._row(form, 0, "Qwen 量化", self.quantization_box,
-                        hint="Q5_K 适合独立显卡，Q4_K 适合集成显卡或低显存；仅 Qwen3-ASR 使用。")
-        self.model_status = ttk.Label(form, text="", style="Field.TLabel")
-        row = self._row(form, row, "模型状态", self.model_status)
-        self.model_advice = ttk.Label(form, text="", style="Hint.TLabel",
-                                      justify="left")
-        self.model_advice.grid(row=row, column=0, columnspan=2, sticky="w",
-                               pady=(0, 10))
-        self._autowrap(form, self.model_advice, offset=6)
-        row += 1
-        actions = ttk.Frame(form, style="Card.TFrame")
-        actions.grid(row=row, column=0, columnspan=2, sticky="w")
-        self.download_button = PillButton(
-            actions, "下载模型", command=self._download_model, kind="primary",
-            width=112, background=CARD_BG)
-        self.download_button.pack(side="left")
-        self.cancel_download_button = PillButton(
-            actions, "取消下载", command=self.download_cancel.set, kind="secondary",
-            width=96, background=CARD_BG)
-        self.cancel_download_button.pack(side="left", padx=(10, 0))
-        self.cancel_download_button.configure(state="disabled")
-        PillButton(actions, "刷新状态", command=self._update_model_info,
-                   kind="secondary", width=96,
-                   background=CARD_BG).pack(side="left", padx=(10, 0))
-        self.download_progress = ttk.Progressbar(form, maximum=100)
-        self.download_progress.grid(row=row + 1, column=0, columnspan=2,
-                                    sticky="ew", pady=(12, 0))
-        self.download_progress.grid_remove()
+        self.shortcut_capture = ShortcutCapture(form, shortcut, width=170)
+        self._row(form, 0, "录音快捷键", self.shortcut_capture,
+                  hint="点击按键标签后，直接按键盘组合键或鼠标侧键完成设置，Esc 取消。")
 
     def _build_options_card(self, body):
         form = self._card(body, "选项")
@@ -586,10 +589,13 @@ class Launcher(tk.Tk):
         row = self._switch_row(
             form, row, self.vars["paste"], "使用剪贴板粘贴输出",
             "用剪贴板粘贴代替逐字键入，适合长文本或输入法不兼容的程序。")
-        self._switch_row(
+        row = self._switch_row(
             form, row, self.vars["keep_microphone_open"], "快速响应",
-            "空闲时保持麦克风占用，缩短按下快捷键后的启动延迟。",
-            divider=False)
+            "空闲时保持麦克风占用，缩短按下快捷键后的启动延迟。")
+        self._row(form, row, "关闭窗口时", ttk.Combobox(
+            form, textvariable=self.vars["close_behavior"], state="readonly",
+            values=tuple(CLOSE_CHOICES.values()), width=20, font=ui_font()),
+            hint="“每次询问”在关闭时弹出选择；“最小化到托盘”保持后台运行。")
 
     def _build_api_page(self, body):
         form = self._card(body, "服务连接")
@@ -941,10 +947,12 @@ class Launcher(tk.Tk):
         data["threshold"] = threshold
         data["child_tray"] = False
         data["shortcuts"] = self._shortcut_data()
-        if self.close_action_remembered and self.close_action in ("tray", "exit"):
-            data["close_action"] = self.close_action
-            data["close_action_remembered"] = True
+        data["close_action"] = self._close_key()
+        data["close_action_remembered"] = data["close_action"] in ("tray", "exit")
         return data
+
+    def _close_key(self):
+        return CLOSE_LABELS.get(self.vars["close_behavior"].get(), "ask")
 
     def _model_key(self):
         selected = self.vars["model_type"].get()
@@ -1205,8 +1213,9 @@ class Launcher(tk.Tk):
         if not self.processes:
             self._close()
             return
-        if self.close_action_remembered and self.close_action in ("tray", "exit"):
-            self._apply_close_action(self.close_action)
+        action = self._close_key()
+        if action in ("tray", "exit"):
+            self._apply_close_action(action)
             return
         self._show_close_dialog()
 
@@ -1245,8 +1254,7 @@ class Launcher(tk.Tk):
         def confirm():
             selected = action.get()
             if remember.get():
-                self.close_action = selected
-                self.close_action_remembered = True
+                self.vars["close_behavior"].set(CLOSE_CHOICES[selected])
                 self._save_close_preference(selected)
             dialog.destroy()
             self._apply_close_action(selected)
@@ -1270,6 +1278,7 @@ class Launcher(tk.Tk):
             data = {}
             if CONFIG.exists():
                 data = json.loads(CONFIG.read_text(encoding="utf-8"))
+            data["close_behavior"] = CLOSE_CHOICES[action]
             data["close_action"] = action
             data["close_action_remembered"] = True
             CONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2),
