@@ -4,6 +4,8 @@
 
 > **按住快捷键说话，松开就上屏。默认 CapsLock，可在图形界面里自由改键。**
 
+**下载**：[Releases](https://github.com/cskkxjk/SAI/releases/latest) 里的 Windows 安装包，或者直接 clone 源码运行。
+
 **SAI** 是一个专为 Windows 打造的离线语音输入与 AI 智能体控制工具，
 默认使用本地模型，也支持可选的 OpenAI 兼容语音转写 API。
 
