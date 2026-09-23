@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from core.shortcut_keys import KeyCapture, shortcut_label
+from core.shortcut_keys import KeyCapture, join_chord, shortcut_label
 
 try:  # Pillow ships with the tray stack; keep a vector fallback just in case.
     from PIL import Image, ImageDraw, ImageFilter, ImageTk
@@ -672,7 +672,7 @@ class ShortcutCapture(ttk.Frame):
                 self.commit(name, "mouse")
             elif kind == "down":
                 self.capture.press(name)
-                self.label.set(shortcut_label("+".join(sorted(self.capture.chord))))
+                self.label.set(shortcut_label(join_chord(self.capture.chord)))
             elif kind == "up":
                 key = self.capture.release(name)
                 if key:

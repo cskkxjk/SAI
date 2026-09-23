@@ -672,6 +672,154 @@ class ShortcutHotReloadTests(unittest.TestCase):
         self.assertIsNone(manager._config_thread)
 
 
+class SidedShortcutKeyTests(unittest.TestCase):
+    """快捷键区分左右修饰键（左/右 Ctrl、Alt、Shift、Win 各自独立）"""
+
+    def test_capture_keeps_the_modifier_side(self):
+        from core.shortcut_keys import KeyCapture, shortcut_label
+
+        def chord(keys):
+            capture = KeyCapture()
+            for name in keys:
+                capture.press(name)
+            return capture.release(keys[-1])
+
+        self.assertEqual(chord(["ctrl_r"]), "ctrl_r")
+        self.assertEqual(chord(["ctrl_l", "a"]), "ctrl_l+a")
+        self.assertEqual(chord(["shift_r"]), "shift_r")
+        self.assertEqual(chord(["shift"]), "shift_l")      # Windows 左 Shift 报 shift
+        self.assertEqual(chord(["cmd"]), "win_l")          # 左 Win
+        self.assertEqual(chord(["cmd_r"]), "win_r")
+        self.assertEqual(chord(["alt_gr"]), "alt_r")
+        self.assertEqual(chord(["f12"]), "f12")
+
+        self.assertEqual(shortcut_label("ctrl_r+x2"), "右 Ctrl + 鼠标侧键 2")
+        self.assertEqual(shortcut_label("shift_l+a"), "左 Shift + A")
+        self.assertEqual(shortcut_label(""), "未设置")
+
+    def test_matching_keeps_sides_apart(self):
+        from core.shortcut_keys import combo_active, matching_names, normalize_part
+
+        self.assertTrue(combo_active(["ctrl_r"], {"ctrl_r"}))
+        self.assertFalse(combo_active(["ctrl_r"], {"ctrl_l"}))
+        self.assertFalse(combo_active(["ctrl_l"], {"ctrl_r"}))
+        self.assertTrue(combo_active(["ctrl"], {"ctrl_l"}))
+        self.assertTrue(combo_active(["ctrl"], {"ctrl_r"}))
+        self.assertTrue(combo_active(["shift_l"], {"shift_l"}))
+        self.assertFalse(combo_active(["shift_r"], {"shift_l"}))
+        self.assertTrue(combo_active(["win_l"], {"win_l"}))
+        self.assertFalse(combo_active(["win_r"], {"win_l"}))
+        self.assertFalse(combo_active(["ctrl_r", "a"], {"ctrl_r"}))
+        self.assertTrue(combo_active(["ctrl_r", "a"], {"ctrl_r", "a"}))
+
+        self.assertEqual(normalize_part("left_ctrl"), "ctrl_l")
+        self.assertEqual(normalize_part("right_ctrl"), "ctrl_r")
+        self.assertEqual(normalize_part("cmd"), "win")
+        self.assertEqual(matching_names("alt"), {"alt", "alt_l", "alt_r"})
+
+    def test_shortcut_normalizes_side_spellings(self):
+        from core.client.shortcut.shortcut_config import Shortcut
+
+        self.assertEqual(Shortcut(key="right_ctrl+a").key, "ctrl_r+a")
+        self.assertEqual(Shortcut(key="left shift").key, "shift_l")
+        self.assertEqual(Shortcut(key="control_l").key, "ctrl_l")
+        self.assertEqual(Shortcut(key="lwin+x1").key, "win_l+x1")
+        self.assertEqual(Shortcut(key="ctrl").key, "ctrl")
+        self.assertEqual(Shortcut(key="caps lock").key, "caps_lock")
+        self.assertEqual(Shortcut(key=" ").key, "space")
+
+    def test_name_to_key_maps_canonical_side_names(self):
+        from core.client.shortcut.key_mapper import KeyMapper
+
+        expected = {"win_l": "cmd", "win_r": "cmd_r", "shift_l": "shift",
+                    "shift_r": "shift_r", "ctrl_l": "ctrl_l", "ctrl_r": "ctrl_r",
+                    "alt_l": "alt_l", "alt_r": "alt_r"}
+        for name, pynput_name in expected.items():
+            key_obj = KeyMapper.name_to_key(name)
+            self.assertIsNotNone(key_obj, name)
+            self.assertEqual(key_obj.name, pynput_name)
+
+    def test_keyboard_filter_triggers_only_the_matching_side(self):
+        from core.client.shortcut.shortcut_manager import (
+            ShortcutManager, WM_KEYDOWN, WM_KEYUP)
+        from core.client.shortcut.shortcut_config import Shortcut
+
+        class Recorder:
+            def __init__(self):
+                self.events = []
+
+            def handle_keydown(self, key_name, task):
+                if task.pressed:
+                    return
+                task.pressed = True
+                self.events.append(("down", key_name))
+
+            def handle_keyup(self, key_name, task):
+                task.pressed = False
+                self.events.append(("up", key_name))
+
+        manager = ShortcutHotReloadTests._manager([])
+        manager.tasks.clear()
+        for key in ("ctrl_l", "ctrl_r", "shift_l+a"):
+            manager.tasks[key] = SimpleNamespace(
+                shortcut=Shortcut(key=key), pressed=False, released=True)
+        manager._pressed_keys = set()
+        manager.keyboard_listener = None
+        manager._event_handler = Recorder()
+        event_filter = manager.create_keyboard_filter()
+
+        event_filter(WM_KEYDOWN, SimpleNamespace(vkCode=0xA3))    # 右 Ctrl
+        self.assertEqual(manager._event_handler.events, [("down", "ctrl_r")])
+
+        event_filter(WM_KEYUP, SimpleNamespace(vkCode=0xA3))
+        manager._event_handler.events.clear()
+
+        event_filter(WM_KEYDOWN, SimpleNamespace(vkCode=0xA2))    # 左 Ctrl
+        self.assertEqual(manager._event_handler.events, [("down", "ctrl_l")])
+        event_filter(WM_KEYUP, SimpleNamespace(vkCode=0xA2))
+        manager._event_handler.events.clear()
+
+        event_filter(WM_KEYDOWN, SimpleNamespace(vkCode=0x41))    # A
+        self.assertEqual(manager._event_handler.events, [])       # 缺少左 Shift
+        event_filter(WM_KEYDOWN, SimpleNamespace(vkCode=0xA0))    # 左 Shift
+        self.assertEqual(manager._event_handler.events, [("down", "shift_l+a")])
+        event_filter(WM_KEYUP, SimpleNamespace(vkCode=0x41))
+        self.assertEqual(manager._event_handler.events[-1], ("up", "shift_l+a"))
+
+
+    def test_mouse_middle_button_is_matched(self):
+        from core.client.shortcut.shortcut_manager import (
+            ShortcutManager, WM_MBUTTONDOWN, WM_MBUTTONUP, XBUTTON1, WM_XBUTTONDOWN)
+        from core.client.shortcut.shortcut_config import Shortcut
+
+        class Recorder:
+            def __init__(self):
+                self.events = []
+
+            def handle_keydown(self, key_name, task):
+                self.events.append(("down", key_name))
+
+        manager = ShortcutHotReloadTests._manager([])
+        manager.tasks.clear()
+        manager.tasks["middle"] = SimpleNamespace(
+            shortcut=Shortcut(key="middle", type="mouse"),
+            pressed=False, released=True, is_recording=False)
+        manager.mouse_listener = None
+        manager._event_handler = Recorder()
+        manager._handle_mouse_keyup = lambda button_name, task: (
+            manager._event_handler.events.append(("up", button_name)))
+        event_filter = manager.create_mouse_filter()
+
+        event_filter(WM_MBUTTONDOWN, SimpleNamespace(mouseData=0))
+        event_filter(WM_MBUTTONUP, SimpleNamespace(mouseData=0))
+        self.assertEqual(manager._event_handler.events,
+                         [("down", "middle"), ("up", "middle")])
+
+        manager._event_handler.events.clear()
+        event_filter(WM_XBUTTONDOWN, SimpleNamespace(mouseData=XBUTTON1 << 16))
+        self.assertEqual(manager._event_handler.events, [])
+
+
 class LlamaRuntimeTests(unittest.TestCase):
     """GGUF 引擎的运行库定位、转发层与错误上报"""
 

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from pynput import keyboard, mouse
 
 from . import logger
+from core.shortcut_keys import canonical_key, combo_active, matching_names, normalize_part
 from core.client.shortcut.key_mapper import *
 from core.client.shortcut.key_mapper import KeyMapper
 from core.client.shortcut.emulator import ShortcutEmulator
@@ -175,16 +176,7 @@ class ShortcutManager:
         return True
 
     def _combo_active(self, parts) -> bool:
-        aliases = {
-            "ctrl": {"ctrl", "ctrl_l", "ctrl_r"},
-            "alt": {"alt", "alt_l", "alt_r", "alt_gr"},
-            "shift": {"shift", "shift_l", "shift_r"},
-            "win": {"win", "win_l", "win_r", "cmd", "cmd_l", "cmd_r"},
-        }
-        return all(
-            bool(self._pressed_keys.intersection(aliases.get(part, {part})))
-            for part in parts
-        )
+        return combo_active(parts, self._pressed_keys)
 
     # ========== 监听器创建 ==========
 
@@ -195,7 +187,7 @@ class ShortcutManager:
             if msg not in KEYBOARD_MESSAGES:
                 return True
 
-            key_name = KeyMapper.vk_to_name(data.vkCode)
+            key_name = canonical_key(KeyMapper.vk_to_name(data.vkCode))
 
             # 防自捕获检查
             if self._check_emulating(key_name, msg):
@@ -209,8 +201,8 @@ class ShortcutManager:
                 for task in self.tasks.values():
                     if task.shortcut.type != "keyboard":
                         continue
-                    parts = frozenset(task.shortcut.key.split("+"))
-                    if key_name in self._pressed_keys and self._combo_active(parts):
+                    parts = [normalize_part(part) for part in task.shortcut.key.split("+")]
+                    if self._combo_active(parts):
                         self._event_handler.handle_keydown(task.shortcut.key, task)
                         matched.append(task)
                 suppress = any(task.shortcut.suppress for task in matched)
@@ -219,16 +211,8 @@ class ShortcutManager:
                 for task in self.tasks.values():
                     if task.shortcut.type != "keyboard":
                         continue
-                    parts = frozenset(task.shortcut.key.split("+"))
-                    key_matches = key_name in parts or any(
-                        key_name in aliases for part in parts
-                        for aliases in ({
-                            "ctrl": {"ctrl_l", "ctrl_r"},
-                            "alt": {"alt_l", "alt_r", "alt_gr"},
-                            "shift": {"shift_l", "shift_r"},
-                            "win": {"win_l", "win_r", "cmd_l", "cmd_r"},
-                        }.get(part, {part}))
-                    )
+                    parts = [normalize_part(part) for part in task.shortcut.key.split("+")]
+                    key_matches = any(key_name in matching_names(part) for part in parts)
                     if key_matches and task.pressed:
                         self._event_handler.handle_keyup(task.shortcut.key, task)
                         matched.append(task)
@@ -246,14 +230,24 @@ class ShortcutManager:
         return win32_event_filter
 
     def _keyboard_press(self, key):
-        key_name = self._key_to_name(key)
-        if key_name in self.tasks:
-            self._event_handler.handle_keydown(key_name, self.tasks[key_name])
+        key_name = canonical_key(self._key_to_name(key))
+        self._pressed_keys.add(key_name)
+        for shortcut_key, task in tuple(self.tasks.items()):
+            if task.shortcut.type != "keyboard":
+                continue
+            parts = [normalize_part(part) for part in shortcut_key.split("+")]
+            if self._combo_active(parts):
+                self._event_handler.handle_keydown(shortcut_key, task)
 
     def _keyboard_release(self, key):
-        key_name = self._key_to_name(key)
-        if key_name in self.tasks:
-            self._event_handler.handle_keyup(key_name, self.tasks[key_name])
+        key_name = canonical_key(self._key_to_name(key))
+        for shortcut_key, task in tuple(self.tasks.items()):
+            if task.shortcut.type != "keyboard":
+                continue
+            parts = [normalize_part(part) for part in shortcut_key.split("+")]
+            if any(key_name in matching_names(part) for part in parts) and task.pressed:
+                self._event_handler.handle_keyup(shortcut_key, task)
+        self._pressed_keys.discard(key_name)
 
     @staticmethod
     def _key_to_name(key) -> str:
@@ -264,13 +258,16 @@ class ShortcutManager:
     def create_mouse_filter(self):
         """创建鼠标事件过滤器"""
         def win32_event_filter(msg, data):
-            # 只处理 XBUTTON 消息
+            # 只处理侧键与中键消息
             if msg not in MOUSE_MESSAGES:
                 return True
 
             # 获取按键标识
-            xbutton = (data.mouseData >> 16) & 0xFFFF
-            button_name = 'x1' if xbutton == XBUTTON1 else 'x2'
+            if msg in (WM_MBUTTONDOWN, WM_MBUTTONUP):
+                button_name = 'middle'
+            else:
+                xbutton = (data.mouseData >> 16) & 0xFFFF
+                button_name = 'x1' if xbutton == XBUTTON1 else 'x2'
 
             # 防自捕获检查
             if self._check_emulating(button_name, msg, is_mouse=True):
@@ -283,9 +280,9 @@ class ShortcutManager:
             task = self.tasks[button_name]
 
             # 处理鼠标事件
-            if msg == WM_XBUTTONDOWN:
+            if msg in (WM_XBUTTONDOWN, WM_MBUTTONDOWN):
                 self._event_handler.handle_keydown(button_name, task)
-            elif msg == WM_XBUTTONUP:
+            elif msg in (WM_XBUTTONUP, WM_MBUTTONUP):
                 self._handle_mouse_keyup(button_name, task)
 
             # 阻塞事件
@@ -341,10 +338,12 @@ class ShortcutManager:
         def do_restore():
             import time
             time.sleep(0.05)  # 延迟 50ms
-            if key == 'caps_lock':
-                controller = keyboard.Controller()
-                controller.press(keyboard.Key.caps_lock)
-                controller.release(keyboard.Key.caps_lock)
+            key_obj = KeyMapper.name_to_key(key)
+            if key_obj is None:
+                return
+            controller = keyboard.Controller()
+            controller.press(key_obj)
+            controller.release(key_obj)
 
         self._pool.submit(do_restore)
 
@@ -365,7 +364,7 @@ class ShortcutManager:
 
         # 松开时清除标志
         if is_mouse:
-            if msg == WM_XBUTTONUP:
+            if msg in (WM_XBUTTONUP, WM_MBUTTONUP):
                 self._emulator.clear_emulating_flag(key_name)
         else:
             if msg in (WM_KEYUP, WM_SYSKEYUP):

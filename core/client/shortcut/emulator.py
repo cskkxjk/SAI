@@ -8,6 +8,7 @@
 from pynput import keyboard, mouse
 from . import logger
 from core.client.shortcut.key_mapper import KeyMapper
+from core.shortcut_keys import canonical_key
 
 
 
@@ -26,11 +27,11 @@ class ShortcutEmulator:
 
     def is_emulating(self, key_name: str) -> bool:
         """检查是否正在模拟指定按键"""
-        return key_name in self._emulating_keys
+        return canonical_key(key_name) in self._emulating_keys
 
     def clear_emulating_flag(self, key_name: str) -> None:
         """清除模拟标志"""
-        self._emulating_keys.discard(key_name)
+        self._emulating_keys.discard(canonical_key(key_name))
 
     def emulate_key(self, key_name: str) -> None:
         """
@@ -39,6 +40,7 @@ class ShortcutEmulator:
         Args:
             key_name: 按键名称（如 'caps_lock', 'f12'）
         """
+        key_name = canonical_key(key_name)
         self._emulating_keys.add(key_name)
 
         key_obj = KeyMapper.name_to_key(key_name)
@@ -47,6 +49,7 @@ class ShortcutEmulator:
             self._keyboard_controller.release(key_obj)
             logger.debug(f"[{key_name}] 补发按键成功")
         else:
+            self._emulating_keys.discard(key_name)
             logger.warning(f"[{key_name}] 无法识别的按键，跳过补发")
 
     def emulate_mouse_click(self, button_name: str) -> None:
@@ -54,14 +57,15 @@ class ShortcutEmulator:
         异步模拟鼠标按键
 
         Args:
-            button_name: 鼠标按键名称（'x1' 或 'x2'）
+            button_name: 鼠标按键名称（'x1'、'x2' 或 'middle'）
         """
         self._emulating_keys.add(button_name)
 
         # pynput 鼠标按键对象映射
         button_map = {
             'x1': mouse.Button.x1,
-            'x2': mouse.Button.x2
+            'x2': mouse.Button.x2,
+            'middle': mouse.Button.middle,
         }
 
         if button_name in button_map:

@@ -44,6 +44,8 @@ WM_SYSKEYUP = 0x0105
 # Windows 鼠标消息常量
 WM_XBUTTONDOWN = 0x020B
 WM_XBUTTONUP = 0x020C
+WM_MBUTTONDOWN = 0x0207
+WM_MBUTTONUP = 0x0208
 XBUTTON1 = 0x0001
 XBUTTON2 = 0x0002
 
@@ -51,13 +53,21 @@ XBUTTON2 = 0x0002
 KEYBOARD_MESSAGES = (WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP)
 KEY_UP_MESSAGES = (WM_KEYUP, WM_SYSKEYUP)
 KEY_DOWN_MESSAGES = (WM_KEYDOWN, WM_SYSKEYDOWN)
-MOUSE_MESSAGES = (WM_XBUTTONDOWN, WM_XBUTTONUP)
+MOUSE_MESSAGES = (WM_XBUTTONDOWN, WM_XBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP)
 
 # 可恢复的切换键（需要录音完成后恢复状态的锁键）
 RESTORABLE_KEYS = {
     'caps_lock',    # 大写锁定
     'num_lock',     # 数字键盘锁定
     'scroll_lock',  # 滚动锁定
+}
+
+# 规范键名 -> pynput 认识的名字（左 Win / 左 Shift 在 pynput 里没有独立名字）
+CANONICAL_KEY_NAMES = {
+    'ctrl': 'ctrl', 'ctrl_l': 'ctrl_l', 'ctrl_r': 'ctrl_r',
+    'alt': 'alt', 'alt_l': 'alt_l', 'alt_r': 'alt_r',
+    'shift': 'shift', 'shift_l': 'shift', 'shift_r': 'shift_r',
+    'win': 'cmd', 'win_l': 'cmd', 'win_r': 'cmd_r',
 }
 
 
@@ -128,11 +138,16 @@ class KeyMapper:
         将按键名称转换为 pynput 按键对象
 
         Args:
-            key_name: 按键名称
+            key_name: 按键名称（支持左/右 Ctrl、Alt、Shift、Win）
 
         Returns:
             pynput 按键对象或 None
         """
+        key_name = (key_name or "").lower()
+
+        # pynput 没有 shift_l / win_l 这类名字，先翻译成它认识的名字
+        key_name = CANONICAL_KEY_NAMES.get(key_name, key_name)
+
         # 特殊按键
         special_keys = KeyMapper._get_special_key_objects()
         if key_name in special_keys:

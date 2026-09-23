@@ -62,26 +62,22 @@ class Shortcut:
             key: 原始键名
 
         Returns:
-            str: 规范化后的键名（pynput 格式）
+            str: 规范化后的键名（Ctrl/Alt/Shift/Win 保留左右区分）
         """
-        # 转小写
-        key = key.lower().strip()
+        from core.shortcut_keys import normalize_part
 
-        # 替换常见别名
-        aliases = {
-            'capslock': 'caps_lock',
-            'caps lock': 'caps_lock',
-            ' ': 'space',
-            'control': 'ctrl',
-        }
+        raw = str(key)
+        text = raw.lower().strip()
+        if not text:
+            # 空格键在配置里就是 " "
+            return 'space' if raw else ''
 
-        for old, new in aliases.items():
-            key = key.replace(old, new)
-
-        # 移除左右修饰符标记（pynput 会自动处理）
-        # 保留 'left ctrl' 这样的形式
-
-        return key
+        text = text.replace('caps lock', 'caps_lock').replace('capslock', 'caps_lock')
+        parts = [
+            normalize_part(part.strip().replace(' ', '_'))
+            for part in text.split('+') if part.strip()
+        ]
+        return '+'.join(parts)
 
     def is_toggle_key(self) -> bool:
         """
