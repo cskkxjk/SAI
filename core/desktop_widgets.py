@@ -433,6 +433,11 @@ class PillButton(tk.Canvas):
                       hover="#EAF3FF", active="#D9EBFF",
                       disabled_fill="", disabled_text="#A8C7E8",
                       disabled_border=""),
+        # 红色实心小胶囊，用于“new”之类的提醒
+        "badge": dict(fill=ERROR, text="#FFFFFF", border="",
+                      hover="#E23A30", active="#CC2F26",
+                      disabled_fill="#F5F5F6", disabled_text="#B4B4BB",
+                      disabled_border=""),
     }
 
     def __init__(self, parent, text="", textvariable=None, command=None,

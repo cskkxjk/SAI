@@ -159,6 +159,9 @@ models/*.py
 # 日志文件夹（包含 server_*.log 和 client_*.log）
 logs/
 
+# 更新检查下载的安装包与状态
+updates/
+
 # 音频文件
 *.mp3
 *.wav

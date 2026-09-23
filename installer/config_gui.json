@@ -9,5 +9,6 @@
   "paste": false,
   "audio_device": null,
   "keep_microphone_open": false,
+  "auto_check_update": true,
   "child_tray": false
 }

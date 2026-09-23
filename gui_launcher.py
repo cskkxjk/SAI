@@ -12,11 +12,13 @@ import tkinter as tk
 import threading
 import time
 import uuid
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
 import sounddevice as sd
+from core import update_checker
 from core.audio_devices import physical_input_devices, resolve_input_device
-from core.runtime_paths import DATA_DIR, initialize_user_data
+from core.runtime_paths import APP_DIR, DATA_DIR, initialize_user_data
 from core.tools.llama_runtime import verify_llama_runtime
 from core.model_download import (download_llama_runtime, download_model,
                                  DownloadCancelled, missing_files, model_files)
@@ -27,6 +29,7 @@ from core.desktop_widgets import (
     ui_font,
 )
 from core.shortcut_keys import shortcut_label
+from config_client import __version__ as APP_VERSION
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 CONFIG = DATA_DIR / "config_gui.json"
@@ -137,6 +140,15 @@ class Launcher(tk.Tk):
         self.hardware_busy = False
         self.hardware_info = None
         self.hardware_after = None
+        self.update_check_events = queue.Queue()
+        self.update_check_thread = None
+        self.update_download_events = queue.Queue()
+        self.update_download_thread = None
+        self.update_cancel = threading.Event()
+        self.update_info = None
+        self.update_dialog = None
+        self.update_badge_visible = False
+        self.update_state = update_checker.read_state()
         self.status = tk.StringVar(value="未启动")
         self.vars = {
             "model_type": tk.StringVar(value=MODEL_CHOICES["qwen_asr"]),
@@ -149,6 +161,7 @@ class Launcher(tk.Tk):
             "paste": tk.BooleanVar(value=False),
             "audio_device": tk.StringVar(value=DEFAULT_MIC),
             "keep_microphone_open": tk.BooleanVar(value=False),
+            "auto_check_update": tk.BooleanVar(value=True),
             "close_behavior": tk.StringVar(value=CLOSE_CHOICES["ask"]),
             "asr_api_base_url": tk.StringVar(value="https://api.openai.com/v1"),
             "asr_api_model": tk.StringVar(value="whisper-1"),
@@ -170,6 +183,8 @@ class Launcher(tk.Tk):
         self._refresh_audio_devices()
         self.protocol("WM_DELETE_WINDOW", self._hide_or_close)
         self.hardware_after = self.after(100, self._detect_hardware)
+        # 启动几秒后再检查更新，避免和模型/设备检测抢启动时间
+        self.after(5000, self._auto_check_update)
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -385,8 +400,15 @@ class Launcher(tk.Tk):
     def _build_sidebar(self, sidebar):
         brand = tk.Frame(sidebar, background=SIDEBAR_BG)
         brand.pack(fill="x", padx=22, pady=(26, 18))
-        ttk.Label(brand, text="SAI",
-                  style="SidebarBrand.TLabel").pack(anchor="w")
+        brand_row = tk.Frame(brand, background=SIDEBAR_BG)
+        brand_row.pack(anchor="w", fill="x")
+        ttk.Label(brand_row, text="SAI",
+                  style="SidebarBrand.TLabel").pack(side="left")
+        # 有新版时显示的“new”徽标，默认隐藏
+        self.update_badge = PillButton(
+            brand_row, "new", command=self._open_update_dialog, kind="badge",
+            width=42, height=20, radius=10, background=SIDEBAR_BG,
+            font=ui_font(8, "bold"), padx=6)
         ttk.Label(brand, text="离线语音输入 · AI 智能体控制",
                   style="SidebarHint.TLabel").pack(anchor="w", pady=(3, 0))
         self.nav_buttons = []
@@ -625,10 +647,22 @@ class Launcher(tk.Tk):
         row = self._switch_row(
             form, row, self.vars["keep_microphone_open"], "快速响应",
             "空闲时保持麦克风占用，缩短按下快捷键后的启动延迟。")
-        self._row(form, row, "关闭窗口时", ttk.Combobox(
+        row = self._row(form, row, "关闭窗口时", ttk.Combobox(
             form, textvariable=self.vars["close_behavior"], state="readonly",
             values=tuple(CLOSE_CHOICES.values()), width=20, font=ui_font()),
             hint="“每次询问”在关闭时弹出选择；“最小化到托盘”保持后台运行。")
+        row = self._switch_row(
+            form, row, self.vars["auto_check_update"], "自动检查更新",
+            "启动后查询 GitHub 发布页；有新版本时在左上角 SAI 旁显示 new 徽标。")
+        version_row = ttk.Frame(form, style="Card.TFrame")
+        version_row.grid(row=row, column=0, columnspan=2, sticky="ew",
+                         pady=(4, 0))
+        ttk.Label(version_row, text=f"当前版本 v{APP_VERSION}",
+                  style="Hint.TLabel").pack(side="left")
+        PillButton(version_row, "检查更新",
+                   command=lambda: self._check_update(manual=True),
+                   kind="secondary", width=96, height=32, background=CARD_BG,
+                   padx=10).pack(side="right")
 
     def _build_api_page(self, body):
         form = self._card(body, "服务连接")
@@ -1011,6 +1045,305 @@ class Launcher(tk.Tk):
                     self._start()
                 return
         self.after(150, self._poll_download)
+
+    # ------------------------------------------------------------------
+    # 更新提醒：检查 GitHub Release、下载安装包、静默升级
+    # ------------------------------------------------------------------
+
+    def _show_update_badge(self, visible):
+        """左上角“new”徽标的显隐"""
+        if visible == self.update_badge_visible:
+            return
+        self.update_badge_visible = visible
+        if visible:
+            self.update_badge.pack(side="left", padx=(8, 0))
+        else:
+            self.update_badge.pack_forget()
+
+    def _auto_check_update(self):
+        """启动后的自动检查；受“自动检查更新”开关和 24 小时间隔限制"""
+        if not self.vars["auto_check_update"].get():
+            return
+        if not update_checker.should_check(self.update_state):
+            return
+        self._check_update()
+
+    def _check_update(self, manual=False):
+        if self.update_check_thread is not None:
+            return
+        if manual:
+            # 检查通常不到一秒；结束后恢复原来的状态文本
+            self._status_before_check = self.status.get()
+            self.status.set("正在检查更新...")
+
+        def worker():
+            try:
+                info = update_checker.fetch_latest_release(APP_VERSION)
+                self.update_check_events.put(("checked", info))
+            except Exception as exc:
+                self.update_check_events.put(("error", str(exc)))
+
+        self.update_check_thread = threading.Thread(target=worker, daemon=True)
+        self.update_check_thread.start()
+        self.after(120, lambda: self._poll_update_check(manual))
+
+    def _poll_update_check(self, manual):
+        try:
+            event, value = self.update_check_events.get_nowait()
+        except queue.Empty:
+            self.after(120, lambda: self._poll_update_check(manual))
+            return
+        thread = self.update_check_thread
+        if thread is not None:
+            thread.join()
+        self.update_check_thread = None
+        # 成功或失败都记录时间，24 小时内不重复请求
+        update_checker.mark_checked(self.update_state)
+        update_checker.write_state(self.update_state)
+        if manual and self.status.get() == "正在检查更新...":
+            self.status.set(getattr(self, "_status_before_check", "未启动"))
+        if event == "error":
+            if manual:
+                messagebox.showerror("检查更新失败",
+                                     f"无法访问 GitHub：{value}", parent=self)
+            return
+        info = value
+        if info is not None and update_checker.is_skipped(self.update_state,
+                                                          info.version):
+            info = None
+        self.update_info = info
+        self._show_update_badge(info is not None)
+        if manual:
+            if info is None:
+                messagebox.showinfo("检查更新",
+                                    f"当前已是最新版本 v{APP_VERSION}。",
+                                    parent=self)
+            else:
+                self._open_update_dialog()
+
+    def _open_update_dialog(self):
+        info = self.update_info
+        if info is None:
+            self._check_update(manual=True)
+            return
+        if self.update_dialog is not None and self.update_dialog.winfo_exists():
+            self.update_dialog.lift()
+            self.update_dialog.focus_force()
+            return
+
+        dialog = tk.Toplevel(self)
+        self.update_dialog = dialog
+        dialog.title(f"发现新版本 v{info.version}")
+        dialog.transient(self)
+        dialog.minsize(520, 420)
+        dialog.geometry("620x560")
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+
+        frame = ttk.Frame(dialog, padding=18)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        header = ttk.Frame(frame)
+        header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(header,
+                  text=f"发现新版本 v{info.version}（当前 v{APP_VERSION}）",
+                  style="Header.TLabel").pack(anchor="w")
+        published = info.published_at[:10]
+        ttk.Label(header,
+                  text=f"发布日期：{published}" if published else "GitHub 发布页有新版本",
+                  style="HeaderSub.TLabel").pack(anchor="w", pady=(2, 0))
+
+        notes_frame = ttk.Frame(frame)
+        notes_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 10))
+        notes_frame.rowconfigure(0, weight=1)
+        notes_frame.columnconfigure(0, weight=1)
+        notes = self._release_notes_widget(notes_frame, info.notes)
+        notes.grid(row=0, column=0, sticky="nsew")
+
+        status_var = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=status_var, style="Hint.TLabel",
+                  justify="left").grid(row=2, column=0, sticky="w")
+        progress = ttk.Progressbar(frame, maximum=100)
+        progress.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        progress.grid_remove()
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, sticky="e", pady=(14, 0))
+        # 便携版/源码运行时只下载安装包，不自动安装
+        installable = (info.can_install and getattr(sys, "frozen", False)
+                       and (APP_DIR / "installed.flag").is_file())
+        cancel_button = PillButton(
+            buttons, "取消下载", command=self.update_cancel.set, kind="danger",
+            width=96, background=PAGE_BG)
+        PillButton(buttons, "稍后", command=dialog.destroy, kind="secondary",
+                   width=72, background=PAGE_BG).pack(side="right")
+        PillButton(buttons, "跳过此版本",
+                   command=lambda: self._skip_update(dialog), kind="ghost",
+                   width=104, background=PAGE_BG).pack(side="right", padx=(0, 10))
+        PillButton(buttons, "打开发布页",
+                   command=lambda: webbrowser.open(info.page_url),
+                   kind="secondary", width=104,
+                   background=PAGE_BG).pack(side="right", padx=(0, 10))
+        action_button = PillButton(
+            buttons, "下载并安装" if installable else "下载安装包",
+            command=lambda: self._download_update(
+                dialog, progress, status_var, action_button, cancel_button),
+            kind="primary", width=112, background=PAGE_BG)
+        action_button.pack(side="right", padx=(0, 10))
+        cancel_button.pack(side="right", padx=(0, 10))
+        cancel_button.configure(state="disabled")
+
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.grab_set()
+
+    @staticmethod
+    def _release_notes_widget(parent, notes):
+        """优先用 tkhtmlview 渲染 Markdown，失败时退回纯文本"""
+        text = notes or "（该版本没有填写更新说明）"
+        try:
+            import markdown as markdown_lib
+            from tkhtmlview import HTMLScrolledText
+            widget = HTMLScrolledText(
+                parent, html=markdown_lib.markdown(text), background=CARD_BG,
+                padx=10, pady=8, relief="flat", highlightthickness=1,
+                highlightbackground=BORDER, font=ui_font(9))
+        except Exception:
+            widget = tk.Text(
+                parent, wrap="word", background=CARD_BG, foreground=TEXT,
+                relief="flat", highlightthickness=1, highlightbackground=BORDER,
+                padx=10, pady=8, font=ui_font(9))
+            widget.insert("1.0", text)
+            widget.configure(state="disabled")
+        return widget
+
+    def _skip_update(self, dialog):
+        info = self.update_info
+        if info is not None:
+            self.update_state["skipped_version"] = info.version
+            update_checker.write_state(self.update_state)
+        self._show_update_badge(False)
+        dialog.destroy()
+        if not (self.running or self.starting):
+            self.status.set(f"已跳过 v{info.version}" if info else "已跳过该版本")
+
+    def _download_update(self, dialog, progress, status_var, action_button,
+                         cancel_button):
+        info = self.update_info
+        if info is None or self.update_download_thread is not None:
+            return
+        self.update_cancel.clear()
+        while not self.update_download_events.empty():
+            self.update_download_events.get_nowait()
+        progress.configure(value=0)
+        progress.grid()
+        status_var.set(f"准备下载 {info.installer_name or '安装包'} ...")
+        action_button.configure(state="disabled")
+        cancel_button.configure(state="normal")
+
+        def worker():
+            def report(label, done, total):
+                self.update_download_events.put(("progress", (label, done, total)))
+            try:
+                path = update_checker.download_installer(
+                    info, report, self.update_cancel)
+                self.update_download_events.put(("downloaded", path))
+            except DownloadCancelled:
+                self.update_download_events.put(("cancelled", None))
+            except Exception as exc:
+                self.update_download_events.put(("error", str(exc)))
+
+        self.update_download_thread = threading.Thread(target=worker, daemon=True)
+        self.update_download_thread.start()
+        self._poll_update_download(dialog, progress, status_var, action_button,
+                                   cancel_button)
+
+    def _poll_update_download(self, dialog, progress, status_var, action_button,
+                              cancel_button):
+        if not dialog.winfo_exists():
+            # 窗口被关掉后停止下载，并尽快释放线程
+            self.update_cancel.set()
+            thread = self.update_download_thread
+            if thread is not None:
+                thread.join(timeout=1)
+                if not thread.is_alive():
+                    self.update_download_thread = None
+            return
+        try:
+            event, value = self.update_download_events.get_nowait()
+        except queue.Empty:
+            self.after(150, lambda: self._poll_update_download(
+                dialog, progress, status_var, action_button, cancel_button))
+            return
+        if event == "progress":
+            label, done, total = value
+            progress.configure(value=100 * done / total if total else 0)
+            status_var.set(f"{label} | {done / 1048576:.1f} / "
+                           f"{total / 1048576:.1f} MiB")
+            self.after(150, lambda: self._poll_update_download(
+                dialog, progress, status_var, action_button, cancel_button))
+            return
+        self.update_download_thread.join()
+        self.update_download_thread = None
+        progress.grid_remove()
+        cancel_button.configure(state="disabled")
+        action_button.configure(state="normal")
+        if event == "downloaded":
+            status_var.set(f"安装包已下载并校验：{Path(value).name}")
+            self._confirm_install_update(dialog, value)
+        elif event == "cancelled":
+            status_var.set("下载已取消")
+        else:
+            status_var.set(f"下载失败：{value}")
+            messagebox.showerror("更新下载失败", value, parent=dialog)
+
+    def _confirm_install_update(self, dialog, installer):
+        info = self.update_info
+        if info is None:
+            return
+        installed = (getattr(sys, "frozen", False)
+                     and (APP_DIR / "installed.flag").is_file())
+        if not installed:
+            messagebox.showinfo(
+                "安装包已下载",
+                f"安装包已保存到：\n{installer}\n\n"
+                "当前是便携版或源码运行，不会自动安装；"
+                "可手动运行安装包完成升级。", parent=dialog)
+            os.startfile(str(Path(installer).parent))
+            return
+        if not messagebox.askokcancel(
+                "安装更新",
+                f"将关闭 SAI 并静默安装 v{info.version}，"
+                "安装完成后自动重新启动。\n\n是否继续？", parent=dialog):
+            return
+        self._install_update(installer)
+
+    def _install_update(self, installer):
+        """退出 SAI，交给批处理等待安装完成后重启新版本"""
+        log_file = CONFIG.parent / "logs" / "update-install.log"
+        log_file.parent.mkdir(exist_ok=True)
+        try:
+            script = update_checker.create_install_script(
+                installer, sys.executable, log_file)
+        except OSError as exc:
+            messagebox.showerror("无法安装更新", str(exc), parent=self)
+            return
+        self.update_cancel.set()
+        if self.download_thread is not None:
+            self.download_cancel.set()
+        self._save(quiet=True)
+        self._stop_processes()
+        if self.tray_icon:
+            self.tray_icon.stop()
+        subprocess.Popen(
+            ["cmd", "/c", str(script)], cwd=str(script.parent),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.destroy()
 
     def _refresh_audio_devices(self, refresh=False):
         if not hasattr(self, "audio_box"):

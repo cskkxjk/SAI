@@ -6,5 +6,6 @@
   "threshold": 0.3,
   "context": "",
   "paste": false,
+  "auto_check_update": true,
   "child_tray": false
 }
