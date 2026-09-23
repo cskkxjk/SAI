@@ -5,7 +5,7 @@
 #ifndef OutputPath
   #define OutputPath "..\dist\installer"
 #endif
-#define AppVersion "1.0.1"
+#define AppVersion "1.0.2"
 
 [Setup]
 AppId={{23100B11-53C4-4AFA-93E6-8C054B16B942}
@@ -26,8 +26,8 @@ OutputBaseFilename=SAI-{#AppVersion}-Setup
 SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\SAI.exe
 LicenseFile=..\LICENSE
-Compression=lzma2/fast
-SolidCompression=no
+Compression=lzma2/ultra64
+SolidCompression=yes
 DiskSpanning=no
 CloseApplications=yes
 RestartApplications=no
@@ -42,6 +42,16 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[InstallDelete]
+; Older releases shipped these unused packages; reclaim the space on upgrade.
+Type: filesandordirs; Name: "{app}\internal\scipy"
+Type: filesandordirs; Name: "{app}\internal\scipy.libs"
+Type: filesandordirs; Name: "{app}\internal\Cython"
+Type: filesandordirs; Name: "{app}\internal\lxml"
+Type: filesandordirs; Name: "{app}\internal\soynlp"
+Type: filesandordirs; Name: "{app}\internal\pyximport"
+Type: filesandordirs; Name: "{app}\internal\pydoc_data"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "assets\*,models\*,logs\*,20*\*,__pycache__\*,config_gui.json"; Flags: ignoreversion recursesubdirs createallsubdirs

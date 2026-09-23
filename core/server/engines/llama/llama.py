@@ -16,6 +16,12 @@ from typing import List, Union, Set, Optional
 from pathlib import Path
 from os.path import relpath
 from . import logger
+from core.tools.llama_runtime import (
+    LlamaRuntimeError,
+    lib_names,
+    load_failure_hint,
+    resolve_llama_bin,
+)
 
 # =========================================================================
 # Configuration
@@ -209,26 +215,17 @@ def bind_llama_lib():
     if llama is not None:
         return
 
-    # 获取库文件所在目录 (模块目录下的 bin)
-    lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
+    # 获取库文件所在目录 (模块目录下的 bin，可用 SAI_LLAMA_BIN 覆盖)
+    lib_dir = resolve_llama_bin(Path(__file__).parent)
 
-    # DLL 命名处理
-    if sys.platform == "win32":
-        GGML_DLL = "ggml.dll"
-        GGML_BASE_DLL = "ggml-base.dll"
-        LLAMA_DLL = "llama.dll"
-    elif sys.platform == "darwin":
-        GGML_DLL = "libggml.dylib"
-        GGML_BASE_DLL = "libggml-base.dylib"
-        LLAMA_DLL = "libllama.dylib"
-    else:
-        GGML_DLL = "libggml.so"
-        GGML_BASE_DLL = "libggml-base.so"
-        LLAMA_DLL = "libllama.so"
-
-    ggml = ctypes.CDLL(os.path.join(lib_dir, GGML_DLL))
-    ggml_base = ctypes.CDLL(os.path.join(lib_dir, GGML_BASE_DLL))
-    llama = ctypes.CDLL(os.path.join(lib_dir, LLAMA_DLL))
+    ggml_name, ggml_base_name, llama_name = lib_names()
+    try:
+        ggml = ctypes.CDLL(str(lib_dir / ggml_name))
+        ggml_base = ctypes.CDLL(str(lib_dir / ggml_base_name))
+        llama = ctypes.CDLL(str(lib_dir / llama_name))
+    except OSError as error:
+        raise LlamaRuntimeError(
+            f"llama.cpp 运行库加载失败：{error}\n{load_failure_hint()}") from error
 
     # 设置日志回调
     LOG_CALLBACK = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
@@ -410,22 +407,23 @@ def init():
     切换目录，初始化 llama.cpp lib
     """
     original_cwd = Path.cwd()
-    lib_dir = Path(__file__).parent / 'bin'
+    lib_dir = resolve_llama_bin(Path(__file__).parent)
 
     # 跳转到 dll 所在目录，并将其加到 Path
     os.chdir(lib_dir)
-    os.environ['PATH'] = os.getcwd() + os.pathsep + os.environ['PATH']
-    if hasattr(os, 'add_dll_directory'):
-        os.add_dll_directory(os.getcwd())
-    logger.info(f"初始化 llama.cpp，跳转至：{Path.cwd()}")
+    try:
+        os.environ['PATH'] = os.getcwd() + os.pathsep + os.environ.get('PATH', '')
+        if hasattr(os, 'add_dll_directory'):
+            os.add_dll_directory(os.getcwd())
+        logger.info(f"初始化 llama.cpp，跳转至：{Path.cwd()}")
 
-    # 绑定 llama api
-    bind_llama_lib()
-    
-    # 跳回到原来目录
-    os.chdir(original_cwd)
+        # 绑定 llama api
+        bind_llama_lib()
+    finally:
+        # 跳回到原来目录
+        os.chdir(original_cwd)
     logger.info(f"恢复至目录：{Path.cwd()}")
-    
+
     return True
 
 init()

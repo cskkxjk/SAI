@@ -109,6 +109,7 @@ a_1 = Analysis(
               'PySide6', 'PySide2', 'PyQt5',
               'matplotlib', 'wx',
               'funasr', 'pydantic', 'torch',
+              'soynlp', 'scipy', 'Cython', 'cython', 'lxml', 'pydoc_data',
               ],
     noarchive=True,
 )

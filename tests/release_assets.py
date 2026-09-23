@@ -63,6 +63,34 @@ class ReleaseAssetsTests(unittest.TestCase):
             self.assertTrue((destination / "core/server/engines/qwen_asr_gguf/"
                              "inference/assets/korean_dict_jieba.dict").is_file())
 
+    def test_desktop_build_excludes_korean_tokenizer_stack(self):
+        """soynlp/scipy (and the optional Cython/lxml chain) only serve the
+        aligner's Korean tokenizer, which falls back to character splitting
+        when the import fails; excluding them keeps the installer small."""
+        tree = ast.parse((ROOT / "build-desktop.spec").read_text(encoding="utf-8"))
+        excluded = {
+            item
+            for node in ast.walk(tree)
+            if isinstance(node, ast.keyword) and node.arg == "excludes"
+            for item in ast.literal_eval(node.value)
+        }
+        for name in ("soynlp", "scipy", "Cython", "cython", "lxml"):
+            with self.subTest(name=name):
+                self.assertIn(name, excluded)
+
+    def test_installer_uses_solid_max_compression(self):
+        script = (ROOT / "installer" / "SAI.iss").read_text(encoding="utf-8")
+        self.assertIn("Compression=lzma2/ultra64", script)
+        self.assertIn("SolidCompression=yes", script)
+
+    def test_installer_deletes_legacy_unused_packages(self):
+        script = (ROOT / "installer" / "SAI.iss").read_text(encoding="utf-8")
+        self.assertIn("[InstallDelete]", script)
+        for name in ("scipy", "scipy.libs", "Cython", "lxml", "soynlp",
+                     "pyximport", "pydoc_data"):
+            with self.subTest(name=name):
+                self.assertIn(r'Name: "{app}\internal\%s"' % name, script)
+
     def test_legacy_builds_copy_icon_without_linking_assets(self):
         for filename in ("build.spec", "build-client.spec"):
             with self.subTest(filename=filename):

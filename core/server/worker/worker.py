@@ -120,4 +120,32 @@ class RecognizerWorker:
         """
         供 multiprocessing 调用
         """
-        self.start()
+        try:
+            self.start()
+        except Exception as error:
+            self._write_fatal_error(error)
+            raise
+
+    @staticmethod
+    def _write_fatal_error(error):
+        """写入共享错误文件，供 GUI 与客户端展示可读原因"""
+        try:
+            import json
+            import traceback
+            from core.runtime_paths import DATA_DIR
+
+            path = DATA_DIR / "logs" / "asr-error.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "error": f"识别服务异常：{error}",
+                        "detail": "".join(traceback.format_exception(error)),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.debug("写入 asr-error.json 失败", exc_info=True)

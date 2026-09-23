@@ -69,13 +69,29 @@ def windows_adapters():
                 release(adapter)
     finally:
         release(factory)
-    return result
+
+    # DXGI 会把同一块显卡枚举多次（不同输出路径 / 混合显卡），按 名称+厂商 合并
+    return merge_duplicate_gpus(result)
+
+
+def merge_duplicate_gpus(adapters):
+    """合并重复的显卡条目：按 名称+厂商 去重，显存取较大值"""
+    unique = {}
+    for gpu in adapters:
+        key = (gpu["name"], gpu["vendor_id"])
+        merged = unique.get(key)
+        if merged is None:
+            unique[key] = gpu
+            continue
+        merged["dedicated_bytes"] = max(merged["dedicated_bytes"], gpu["dedicated_bytes"])
+        merged["shared_bytes"] = max(merged["shared_bytes"], gpu["shared_bytes"])
+    return list(unique.values())
 
 
 def recommend(info):
     """Heuristics, not benchmarks or claims about current GPU utilization."""
     settings = dict(model_type="sensevoice", qwen_quantization="q5_k",
-                    onnx_provider="CPU", llm_use_gpu=False, gpu_boost_enabled=False)
+                    onnx_provider="CPU", llm_use_gpu=False)
     gpu = max((g for g in info["gpus"] if g["vendor_id"] in VENDORS),
               key=lambda g: g["dedicated_bytes"], default=None)
     if info.get("gpu_error"):
@@ -159,7 +175,6 @@ def format_hardware(info):
         "ONNX 运行库后端：" + ", ".join(info["onnx_providers"]),
         "",
         "建议：" + info["recommendation"]["reason"],
-        "NVIDIA 预加速：建议保持关闭。",
         "以上为容量建议，不是速度测试；未检测 GPU 空闲率或当前剩余显存。",
         "多显卡时建议参考显存较大的设备，实际推理设备以启动日志为准。",
     ])

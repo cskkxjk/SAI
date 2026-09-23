@@ -3,9 +3,13 @@ import hashlib
 import re
 import shutil
 import threading
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
 
 import requests
+
+
+RUNTIME_DOWNLOAD_TIMEOUT = (15, 60)
 
 
 DOWNLOADS = {
@@ -177,3 +181,88 @@ def download_model(name, root, progress=lambda *args: None, cancel=None, quantiz
                 temporary.unlink(missing_ok=True)
             completed += item["size"]
         progress("下载并校验完成", total, total)
+
+
+def install_llama_runtime(archive, bin_dir, cancel=None):
+    """把运行库压缩包里的 DLL 解压到 bin_dir（扁平覆盖），返回写入的文件数"""
+    cancel = cancel or threading.Event()
+    bin_dir = Path(bin_dir)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with zipfile.ZipFile(archive) as bundle:
+        for entry in bundle.infolist():
+            name = PurePosixPath(entry.filename.replace("\\", "/")).name
+            if entry.is_dir() or not name.lower().endswith(".dll"):
+                continue
+            _check_cancel(cancel)
+            with bundle.open(entry) as source, (bin_dir / name).open("wb") as target:
+                shutil.copyfileobj(source, target, 1024 * 1024)
+            count += 1
+    if not count:
+        raise RuntimeError("运行库压缩包里没有 DLL 文件")
+    return count
+
+
+def _manual_runtime_hint(url, bin_dir, error):
+    from core.tools import llama_runtime
+
+    return (f"运行库下载失败：{error}\n"
+            f"可手动下载 {url} 并解压到 {bin_dir}，"
+            f"或设置环境变量 {llama_runtime.ENV_URL} 指向镜像地址。")
+
+
+def download_llama_runtime(root, progress=lambda *args: None, cancel=None):
+    """下载并安装 llama.cpp 运行库，返回可展示的完成消息"""
+    from core.tools import llama_runtime
+
+    cancel = cancel or threading.Event()
+    root = Path(root).resolve()
+    base_dir = root / "core" / "server" / "engines" / "llama"
+    bin_dir = base_dir / "bin"
+    if not llama_runtime.runtime_platform_supported():
+        raise RuntimeError("当前系统暂不支持自动下载运行库，请手动安装 llama.cpp")
+    url = llama_runtime.runtime_download_url(base_dir)
+    digest = llama_runtime.runtime_download_digest(base_dir)
+    tag = llama_runtime.runtime_tag(base_dir)
+    free_space = shutil.disk_usage(base_dir if base_dir.exists() else root).free
+    if free_space < 256 * 1024 * 1024:
+        raise OSError("安装目录所在磁盘空间不足")
+    base_dir.mkdir(parents=True, exist_ok=True)
+    progress("正在下载 llama.cpp 运行库", 0, 0)
+    _check_cancel(cancel)
+    temporary = base_dir / ".runtime-download.zip.part"
+    try:
+        with requests.Session() as session:
+            # GitHub 在部分网络环境下需要走系统代理
+            session.trust_env = True
+            try:
+                response = session.get(url, stream=True,
+                                       timeout=RUNTIME_DOWNLOAD_TIMEOUT,
+                                       allow_redirects=True)
+            except requests.RequestException as error:
+                raise RuntimeError(_manual_runtime_hint(url, bin_dir, error)) from error
+            with response:
+                try:
+                    response.raise_for_status()
+                except requests.RequestException as error:
+                    raise RuntimeError(_manual_runtime_hint(url, bin_dir, error)) from error
+                total = int(response.headers.get("Content-Length") or 0)
+                loader = hashlib.sha256()
+                received = 0
+                with temporary.open("wb") as output:
+                    for data in response.iter_content(1024 * 1024):
+                        _check_cancel(cancel)
+                        received += len(data)
+                        output.write(data)
+                        loader.update(data)
+                        progress("正在下载 llama.cpp 运行库", received, total)
+        _check_cancel(cancel)
+        if digest and loader.hexdigest() != digest:
+            raise RuntimeError(f"运行库校验失败（SHA256 不匹配），请重试：{url}")
+        count = install_llama_runtime(temporary, bin_dir, cancel)
+    finally:
+        temporary.unlink(missing_ok=True)
+    report = llama_runtime.verify_llama_runtime(base_dir)
+    if report.fatal:
+        raise RuntimeError("运行库修复后仍异常：" + "；".join(report.problems))
+    return f"运行库已修复（llama.cpp {tag}，{count} 个文件）"

@@ -184,6 +184,7 @@ stocks.txt
 example_*.py
 example_.ipynb
 file_*.txt
+!installer/file_version_info.txt
 *summary*.txt
 *summary*.md
 

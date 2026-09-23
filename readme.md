@@ -112,7 +112,7 @@ SAI 目前只在 **Windows 10/11 (64 位)** 上构建和测试，安装包与便
 
 #### 使用安装向导
 
-安装包位于 `dist/installer`，运行 `SAI-1.0.1-Setup.exe`。
+安装包位于 `dist/installer`，运行 `SAI-1.0.2-Setup.exe`。
 这是不含模型的单文件安装包，只需复制 Setup.exe，不再需要旁边的 `.bin` 文件。
 安装过程不下载模型；首次使用本地识别时，在程序配置页从 ModelScope 按需下载。
 
@@ -279,11 +279,13 @@ Test-Path models\Fun-ASR-Nano\Fun-ASR-Nano-GGUF\model\Fun-ASR-Nano-Decoder.q8_0.
 #### 5. 准备 llama.cpp 运行库
 
 Qwen3-ASR 和 Fun-ASR-Nano 的 GGUF 解码器需要 llama.cpp 的 Windows Vulkan DLL。
-从下面的官方发行包下载并解压：
+**安装版自带**这套运行库；如果被杀毒软件隔离、误删或版本不符，桌面端「识别设置」
+页的「推理运行库」会直接显示状态，点「修复运行库」即可联网下载、校验并覆盖安装
+（下载走系统代理；无法访问 GitHub 时也可手动下载）：
 
 <https://github.com/ggml-org/llama.cpp/releases/download/b10621/llama-b10621-bin-win-vulkan-x64.zip>
 
-将压缩包中的 DLL 文件全部复制到：
+解压后把 DLL 全部复制到：
 
 ```text
 core/server/engines/llama/bin/
@@ -306,6 +308,9 @@ libomp.dll
 可用 `Get-FileHash <压缩包路径> -Algorithm SHA256` 核对。保留仓库提供的
 `core/server/engines/llama/bin/runtime-version.json`，构建时会检查版本。
 升级时先把旧 bin 目录备份到其他位置，再放入新版 DLL，不要混用 b7798 和 b10621。
+若需要用自建镜像代替 GitHub，可设置环境变量 `SAI_LLAMA_RUNTIME_URL`（压缩包地址）
+与 `SAI_LLAMA_RUNTIME_SHA256`（对应 SHA256），或改 `runtime-version.json` 里的
+`url` / `sha256` 字段。
 
 #### 6. 构建统一 EXE
 
@@ -463,7 +468,9 @@ Windows 可能会通过 MME、DirectSound、WASAPI 和 WDM-KS 为同一个物理
 | --- | --- |
 | 桌面图形界面 | 侧边导航 + 卡片式布局：常规设置、语音 API、设备检测、热词与替换集中在同一窗口，美术风格参考 clash-verge-rev |
 | 一键安装包 | Inno Setup 安装程序，写入开始菜单/桌面快捷方式与卸载入口，安装目录与用户数据分离，并提供 `SAI.exe --self-test` 自检 |
-| 可改快捷键 | 快捷键采集控件支持键盘组合键与鼠标侧键，默认 CapsLock 长按录音，可在界面中随时更换 |
+| 可改快捷键 | 快捷键采集控件支持键盘组合键与鼠标侧键，默认 CapsLock 长按录音，可在界面中随时更换；改动后客户端几秒内热重载，无需重启、不重新加载模型 |
+| 粘贴快捷键 | 可单独设置一个「粘贴快捷键」：用该键录音时结果一律用剪贴板 Ctrl+V 上屏，适合远程桌面、虚拟机等逐字输入不好使的场景 |
+| 远程桌面适配 | 自动识别 mstsc / 深信服等远程与虚拟桌面：中文改用剪贴板（并自动加长剪贴板同步与恢复的等待时间），ASCII 改用 pynput 逐字键入，避免 `keyboard.write` 在转发层被搅乱 |
 | Windows 统一入口 | `gui_launcher.py` 提供配置窗口、模型检查、服务启动和托盘管理，最终由 `SAI.exe` 统一运行 |
 | 热词与替换编辑器 | 表格化的文字替换、热词别名与正则规则编辑，可直接在界面内保存并热重载 |
 | 远端 API 转写 | 支持 OpenAI 兼容 `/audio/transcriptions`，可测试连接、允许可信局域网明文 HTTP、本地地址绕过系统代理 |

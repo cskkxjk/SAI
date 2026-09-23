@@ -7,16 +7,15 @@
 
 from __future__ import annotations
 
-import asyncio
-import platform
 from typing import Optional
 import re
+import time
 
 import keyboard
-import pyclip
-from pynput import keyboard as pynput_keyboard
+from pynput.keyboard import Controller as PynputController
 
 from config_client import ClientConfig as Config
+from core.tools.asyncio_to_thread import to_thread
 from core.tools.window_detector import get_active_window_info
 from . import logger
 
@@ -34,6 +33,32 @@ def count_semantic_units(text: str) -> int:
     """计算语义字符数：中文字=1，英文单词=1，数字=1"""
     return len(_SEMANTIC_UNIT_RE.findall(text))
 
+
+def type_text(text: str) -> None:
+    """
+    逐字键入文本（LLM 流式输出与普通输出共用这一份实现）
+
+    - 普通窗口：keyboard.write，速度快
+    - 远程桌面 / 虚拟桌面（深信服等）：实测 keyboard.write 的扫描码事件会被
+      这些客户端搅成乱码，必须改用 pynput 的虚拟键事件，并逐字留出间隔
+    - 远程目标无法键入中文（对端没有输入法组字），这类内容应走剪贴板粘贴
+    """
+    if not text:
+        return
+
+    from core.client.clipboard import REMOTE_TYPE_INTERVAL, is_remote_target
+    if not is_remote_target():
+        keyboard.write(text)
+        return
+
+    if not text.isascii():
+        logger.warning("远程桌面无法键入中文等非 ASCII 内容，请改用粘贴快捷键输出")
+        return
+
+    controller = PynputController()
+    for char in text:
+        controller.type(char)
+        time.sleep(REMOTE_TYPE_INTERVAL)
 
 
 class TextOutput:
@@ -90,58 +115,43 @@ class TextOutput:
         # 确定输出方式
         if paste is None:
             paste = Config.paste
-        
+
+        # 远程桌面 / 虚拟桌面里中文只能靠剪贴板，避免静默丢失
+        if not paste:
+            from core.client.clipboard import needs_paste_for_remote
+            if needs_paste_for_remote(text):
+                paste = True
+                logger.debug("远程桌面 / 虚拟桌面无法键入中文，改用剪贴板粘贴输出")
+
         if paste:
             await self._paste_text(text)
         else:
-            self._type_text(text)
+            # 远程目标逐字键入会 sleep，放到线程里避免阻塞事件循环
+            await to_thread(type_text, text)
     
     async def _paste_text(self, text: str) -> None:
         """
         通过粘贴方式输出文本
-        
+
+        统一走 core.client.clipboard 的实现：先写入剪贴板并校验，
+        再模拟 Ctrl+V，最后延迟恢复原剪贴板（远程桌面等慢目标会等更久）。
+
         Args:
             text: 要粘贴的文本
         """
+        from core.client.clipboard import paste_text
         logger.debug(f"使用粘贴方式输出文本，长度: {len(text)}")
-        
-        # 保存剪贴板
-        try:
-            temp = pyclip.paste().decode('utf-8')
-        except Exception:
-            temp = ''
-        
-        # 复制结果
-        pyclip.copy(text)
-        
-        # 粘贴结果（使用 pynput 模拟 Ctrl+V）
-        controller = pynput_keyboard.Controller()
-        if platform.system() == 'Darwin':
-            # macOS: Command+V
-            with controller.pressed(pynput_keyboard.Key.cmd):
-                controller.tap('v')
-        else:
-            # Windows/Linux: Ctrl+V
-            with controller.pressed(pynput_keyboard.Key.ctrl):
-                controller.tap('v')
-        
-        logger.debug("已发送粘贴命令 (Ctrl+V)")
-        
-        # 还原剪贴板
-        if Config.restore_clip:
-            await asyncio.sleep(0.1)
-            pyclip.copy(temp)
-            logger.debug("剪贴板已恢复")
+        await paste_text(text, restore_clipboard=Config.restore_clip)
     
     def _type_text(self, text: str) -> None:
         """
         通过模拟打字方式输出文本
 
-        使用 keyboard.write 替代 pynput.keyboard.Controller.type()，
-        避免与中文输入法冲突。
+        具体实现见模块级 type_text：普通窗口用 keyboard.write 快速键入，
+        远程桌面 / 虚拟桌面（深信服等）改用 pynput。
 
         Args:
             text: 要输出的文本
         """
         logger.debug(f"使用打字方式输出文本，长度: {len(text)}")
-        keyboard.write(text)
+        type_text(text)

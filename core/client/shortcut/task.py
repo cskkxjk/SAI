@@ -83,6 +83,8 @@ class ShortcutTask:
         self.is_recording = True
         self._cancelled = False
         self._ended = asyncio.Event()
+        # 粘贴快捷键：本次录音的结果一律用剪贴板 Ctrl+V 输出
+        self.state.set_paste_override(True if getattr(self.shortcut, "paste", False) else None)
         self.state.start_recording(self.recording_start_time)
         session = self._run_session()
         try:

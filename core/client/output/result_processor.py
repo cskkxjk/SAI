@@ -16,6 +16,7 @@ from core.client.state import console
 from core.protocol import RecognitionMessage
 
 from core.client.output.text_output import TextOutput
+from core.client.clipboard import needs_paste_for_remote
 from core.tools.window_detector import get_active_window_info
 import keyboard
 from . import logger
@@ -275,13 +276,19 @@ class ResultProcessor:
                 log_str = "; ".join([f"{origin}->{hw}({score:.2f})" for origin, hw, score in potential_matches])
                 logger.debug(f"潜在热词: {log_str}")
 
-        # 窗口兼容性检测
-        paste = Config.paste
+        # 窗口兼容性检测（粘贴快捷键的设定优先于配置）
+        override = self.state.consume_paste_override()
+        paste = Config.paste if override is None else override
+        if override is not None:
+            logger.debug("本次录音来自粘贴快捷键，使用剪贴板粘贴输出")
         process_name = get_active_window_info().get('process_name', '')
         logger.debug(f"当前活动窗口: {process_name}")
         if any(app.lower() == process_name.lower() for app in Config.paste_apps):
             paste = True
             logger.debug(f"检测到兼容性应用: {process_name}，使用粘贴模式")
+        if not paste and needs_paste_for_remote(text):
+            paste = True
+            logger.debug(f"当前是远程桌面/虚拟桌面 {process_name}，中文只能粘贴输出")
 
         # 自动回车检测
         for app, delay in Config.enter_apps:

@@ -9,6 +9,7 @@
 4. hold_mode 和 click_mode 支持
 """
 from __future__ import annotations
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -20,6 +21,7 @@ from core.client.shortcut.key_mapper import *
 from core.client.shortcut.key_mapper import KeyMapper
 from core.client.shortcut.emulator import ShortcutEmulator
 from core.client.shortcut.event_handler import ShortcutEventHandler
+from core.client.shortcut.shortcut_config import load_shortcuts
 from core.client.shortcut.task import ShortcutTask
 
 if TYPE_CHECKING:
@@ -68,6 +70,11 @@ class ShortcutManager:
         # 事件处理器
         self._event_handler = ShortcutEventHandler(self.tasks, self._pool, self._emulator)
 
+        # 配置热重载（config_gui.json 变化时自动重建快捷键任务）
+        self._config_thread: Optional[threading.Thread] = None
+        self._config_stop: Optional[threading.Event] = None
+        self._config_signature = self._signature(shortcuts)
+
         # 初始化快捷键任务
         self._init_tasks()
 
@@ -89,6 +96,83 @@ class ShortcutManager:
             task.pool = self._pool
             task.threshold = shortcut.get_threshold(Config.threshold)
             self.tasks[shortcut.key] = task
+
+    # ========== 热重载 ==========
+
+    CONFIG_POLL_INTERVAL = 1.0
+
+    @staticmethod
+    def _signature(shortcuts: List[Shortcut]) -> tuple:
+        """快捷键配置指纹，用于判断配置是否真的发生变化"""
+        return tuple(
+            (shortcut.key, shortcut.type, bool(shortcut.enabled),
+             bool(shortcut.suppress), bool(shortcut.hold_mode),
+             bool(getattr(shortcut, 'paste', False)))
+            for shortcut in shortcuts
+        )
+
+    def reload(self, shortcuts: List[Shortcut]) -> None:
+        """
+        热重载快捷键配置
+
+        监听器读取的是 self.tasks 这个活字典，所以只需就地重建任务即可生效：
+        不用重启进程，也不会重新加载模型。
+        """
+        for task in self.tasks.values():
+            if task.is_recording:
+                task.cancel()
+
+        self.shortcuts = shortcuts
+        self.tasks.clear()
+        self._pressed_keys.clear()
+        self._init_tasks()
+        self._config_signature = self._signature(shortcuts)
+        self.start()
+
+        enabled = ", ".join(s.key for s in shortcuts if s.enabled) or "无"
+        logger.info(f"快捷键配置已热重载，当前启用: {enabled}")
+
+    def start_config_watcher(self) -> None:
+        """启动配置监视线程：config_gui.json 变化时自动热重载快捷键"""
+        if self._config_thread and self._config_thread.is_alive():
+            return
+
+        self._config_stop = threading.Event()
+        self._config_thread = threading.Thread(
+            target=self._watch_config, name="shortcut-config-watcher", daemon=True)
+        self._config_thread.start()
+        logger.debug("快捷键配置监视已启动")
+
+    def stop_config_watcher(self) -> None:
+        """停止配置监视线程"""
+        if self._config_stop is not None:
+            self._config_stop.set()
+
+        thread = self._config_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=3)
+
+        self._config_thread = None
+        self._config_stop = None
+
+    def _watch_config(self) -> None:
+        while self._config_stop is not None and not self._config_stop.wait(self.CONFIG_POLL_INTERVAL):
+            try:
+                self._poll_config()
+            except Exception as exc:
+                logger.debug(f"检查快捷键配置变化失败: {exc}")
+
+    def _poll_config(self) -> bool:
+        """对比配置文件与当前快捷键，必要时热重载；返回是否发生重载"""
+        shortcuts = load_shortcuts()
+        if not shortcuts:
+            return False
+        if self._signature(shortcuts) == self._config_signature:
+            return False
+
+        logger.info("检测到 config_gui.json 变化，正在热重载快捷键")
+        self.reload(shortcuts)
+        return True
 
     def _combo_active(self, parts) -> bool:
         aliases = {
@@ -356,6 +440,8 @@ class ShortcutManager:
 
     def stop(self) -> None:
         """停止所有监听器和清理资源"""
+        self.stop_config_watcher()
+
         if self.keyboard_listener:
             try:
                 self.keyboard_listener.stop()

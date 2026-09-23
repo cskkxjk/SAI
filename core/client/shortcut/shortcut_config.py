@@ -22,6 +22,7 @@ class Shortcut:
         hold_mode: 长按模式。True=按下录音松开停止；False=单击开始再次单击停止
         threshold: 按下快捷键后触发语音识别的时间阈值（秒），用于防止误触。None 表示使用 Config.threshold
         enabled: 是否启用此快捷键
+        paste: 按此快捷键录音时，结果一律用剪贴板 Ctrl+V 粘贴（适合远程桌面等场景）
 
     注意：
         - 非阻塞模式下，对于可恢复的切换键（CapsLock/NumLock/ScrollLock），会自动补发以恢复状态
@@ -33,6 +34,7 @@ class Shortcut:
     hold_mode: bool = True
     threshold: Optional[float] = None  # None 表示使用 Config.threshold
     enabled: bool = True
+    paste: bool = False  # True = 此快捷键的识别结果一律用剪贴板 Ctrl+V 粘贴
 
     def __post_init__(self):
         """初始化后验证配置"""
@@ -144,3 +146,40 @@ class CommonShortcuts:
             hold_mode=True,
             threshold=0.3
         )
+
+
+def load_shortcuts(path=None) -> list:
+    """
+    从 config_gui.json 读取快捷键配置（供热重载使用）
+
+    Args:
+        path: 配置文件路径，None 表示使用 config_client 的默认配置路径
+
+    Returns:
+        Shortcut 列表；文件缺失或内容不合法时返回空列表
+    """
+    import json
+    from pathlib import Path
+
+    if path is None:
+        import config_client
+        path = config_client._GUI_CONFIG
+
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+
+    entries = data.get('shortcuts') if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return []
+
+    fields = set(Shortcut.__dataclass_fields__)
+    shortcuts = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get('key'):
+            continue
+        payload = {name: value for name, value in entry.items() if name in fields}
+        shortcuts.append(Shortcut(**payload))
+    return shortcuts
+

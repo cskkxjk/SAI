@@ -4,14 +4,16 @@ LLM Typing 输出模式
 直接打字输出，根据 paste 参数或 Config.paste 选择：
 - paste=True: 等流式输出完成后一次性粘贴
 - paste=False: 实时流式 write，每个字都打出来
+
+远程桌面 / 虚拟桌面（深信服等）一律走粘贴：那里既能键入的内容有限
+（中文无法键入），keyboard.write 的事件也会被搅乱。
 """
 import asyncio
-import keyboard
 
 from config_client import ClientConfig as Config
 from core.tools.asyncio_to_thread import to_thread
-from core.client.output.text_output import TextOutput
-from core.client.clipboard import paste_text
+from core.client.output.text_output import TextOutput, type_text
+from core.client.clipboard import is_remote_target, paste_text
 from . import logger
 
 
@@ -21,7 +23,11 @@ async def handle_typing_mode(handler, text: str, paste: bool = None, matched_hot
     # 如果没传，则现场检测一次（兼容性）
     if not role_config or content is None:
         role_config, content = handler.detect_role(text)
-    
+
+    if not paste and is_remote_target():
+        paste = True
+        logger.debug("远程桌面 / 虚拟桌面无法可靠键入，改用剪贴板粘贴输出")
+
     if not role_config:
         # 不应发生，但作为防守
         result_text = TextOutput.strip_punc(text)
@@ -84,8 +90,8 @@ async def _process_streaming(handler, role_config, content, matched_hotwords) ->
             trailing = full_current
 
         if content_to_write:
-            logger.debug(f"output_text: keyboard.write '{content_to_write}'")
-            keyboard.write(content_to_write)
+            logger.debug(f"output_text: type_text '{content_to_write}'")
+            type_text(content_to_write)
             pending_buffer = trailing
         else:
             pending_buffer = trailing
@@ -103,22 +109,23 @@ async def _process_streaming(handler, role_config, content, matched_hotwords) ->
     # 如果模型没有任何输出，直接打出原文字
     if not chunks:
         final_text = TextOutput.strip_punc(content)
-        logger.debug(f"output_text: keyboard.write '{final_text}' (降级)")
-        keyboard.write(final_text)
+        logger.debug(f"output_text: type_text '{final_text}' (降级)")
+        type_text(final_text)
         return (final_text, 0, 0.0)
     
     # 如果 LLM 只输出标点，会被拦截，就要做补偿输出
     full_output = ''.join(chunks).strip()
     if len(full_output) == 1 and full_output in Config.trash_punc:
-        keyboard.write(full_output)
+        type_text(full_output)
     
     return (TextOutput.strip_punc(polished_text), token_count, gen_time)
 
 
 async def output_text(text: str, paste: bool = None):
     """输出文本（根据 paste 或 Config.paste 选择方式）"""
-    if paste:
+    if paste or (is_remote_target() and not text.isascii()):
         await paste_text(text, restore_clipboard=Config.restore_clip)
     else:
-        logger.debug(f"output_text: keyboard.write '{text}'")
-        keyboard.write(text)
+        logger.debug(f"output_text: type_text '{text}'")
+        # 远程目标逐字键入会 sleep，放到线程里避免阻塞事件循环
+        await to_thread(type_text, text)

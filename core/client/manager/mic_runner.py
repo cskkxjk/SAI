@@ -29,6 +29,12 @@ class MicRunner:
 
     def start_resources(self):
         """初始化麦克风模式特有资源 (音频硬件、快捷键、UI 托盘)"""
+        # 0. 上次进程被强杀可能残留按住的修饰键，先收尾
+        from core.tools.stuck_keys import release_stuck_modifiers
+        released = release_stuck_modifiers()
+        if released:
+            logger.warning(f"检测到残留的修饰键，已释放: {', '.join(released)}")
+
         # 1. 托盘
         self.tray_manager.start()
 
@@ -37,6 +43,8 @@ class MicRunner:
 
         # Only listen for shortcuts here; each recording owns its audio stream.
         self.app.shortcut.start()
+        # 快捷键配置改变后热重载，不必重启客户端（模型无需重新加载）
+        self.app.shortcut.start_config_watcher()
         
         # 4. 开启 UDP 控制 (如果启用)
         if Config.udp_control:

@@ -17,13 +17,16 @@ from tkinter import messagebox, ttk
 import sounddevice as sd
 from core.audio_devices import physical_input_devices, resolve_input_device
 from core.runtime_paths import DATA_DIR, initialize_user_data
-from core.model_download import download_model, DownloadCancelled, missing_files, model_files
+from core.tools.llama_runtime import verify_llama_runtime
+from core.model_download import (download_llama_runtime, download_model,
+                                 DownloadCancelled, missing_files, model_files)
 from core.desktop_widgets import (
     BORDER, CARD_BG, DIVIDER, ERROR, FONT_FAMILY, HOVER_BG, PAGE_BG, PRIMARY,
     SELECTED_BG, SIDEBAR_BG, SUCCESS, TEXT, TEXT_SECONDARY, WARNING,
     Card, NavButton, PillButton, ScrollPage, ShortcutCapture, Switch,
     ui_font,
 )
+from core.shortcut_keys import shortcut_label
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 CONFIG = DATA_DIR / "config_gui.json"
@@ -33,6 +36,7 @@ PUNC_MODEL = (
     "models/Punct-CT-Transformer/"
     "sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12/model.onnx"
 )
+GGUF_MODELS = ("qwen_asr", "fun_asr_nano")
 
 
 APP_TITLE = "SAI 离线语音输入"
@@ -125,6 +129,8 @@ class Launcher(tk.Tk):
         self.download_thread = None
         self.download_cancel = threading.Event()
         self.download_events = queue.Queue()
+        self.download_error_title = "下载失败"
+        self.start_after_repair = False
         self.api_test_events = queue.Queue()
         self.api_test_thread = None
         self.hardware_events = queue.Queue()
@@ -154,6 +160,7 @@ class Launcher(tk.Tk):
         self.saved_audio_device = None
         self.saved_shortcuts = list(DEFAULT_SHORTCUTS)
         self.shortcut_capture = None
+        self.paste_capture = None
         self._load()
         self._build()
         self._start_tray()
@@ -319,7 +326,7 @@ class Launcher(tk.Tk):
                 self.vars["close_behavior"].set(CLOSE_CHOICES[data["close_action"]])
             for key, value in data.items():
                 if key in self.vars:
-                    if key == "audio_device":
+                    if key in ("audio_device", "paste"):
                         continue
                     if key == "model_type":
                         value = MODEL_CHOICES.get(value, value)
@@ -538,11 +545,20 @@ class Launcher(tk.Tk):
         PillButton(actions, "刷新状态", command=self._update_model_info,
                    kind="secondary", width=96,
                    background=CARD_BG).pack(side="left", padx=(10, 0))
+        self.runtime_button = PillButton(
+            actions, "修复运行库", command=self._repair_runtime, kind="secondary",
+            width=112, background=CARD_BG)
+        self.runtime_button.pack(side="left", padx=(10, 0))
         self.download_progress = ttk.Progressbar(form, maximum=100)
         self.download_progress.grid(row=row + 1, column=0, columnspan=2,
                                     sticky="ew", pady=(12, 0))
         self.download_progress.grid_remove()
         row += 2
+        self.runtime_status = ttk.Label(form, text="", style="Field.TLabel")
+        row = self._row(form, row, "推理运行库", self.runtime_status,
+                        hint="GGUF 模型（Qwen3-ASR、Fun-ASR）依赖该运行库。"
+                             "被杀毒软件破坏、误删或版本不符时会在“模型状态”旁提示，"
+                             "点“修复运行库”可联网下载并校验后自动覆盖。")
         tk.Frame(form, background=DIVIDER, height=1).grid(
             row=row, column=0, columnspan=2, sticky="ew", pady=(4, 6))
         row += 1
@@ -559,7 +575,9 @@ class Launcher(tk.Tk):
             hint="按住快捷键的时长超过该值才会触发识别，默认 0.3 秒。")
         self._row(form, row, "上下文提示", ttk.Entry(
             form, textvariable=self.vars["context"], width=42, font=ui_font()),
-            hint="随录音一起发送的识别提示文字，可留空。")
+            hint="写专业术语、人名、项目名等，作为解码提示随录音发给服务端。"
+                 "仅 Fun-ASR、Qwen3-ASR 等带 LLM 解码器的模型和远端 API 会用到，"
+                 "Paraformer、SenseVoice 会忽略；可留空。")
 
     def _build_audio_card(self, body):
         form = self._card(body, "录音")
@@ -576,19 +594,34 @@ class Launcher(tk.Tk):
 
     def _build_shortcut_card(self, body):
         form = self._card(body, "快捷键")
-        shortcut = self.saved_shortcuts[0] if self.saved_shortcuts else DEFAULT_SHORTCUTS[0]
+        shortcut = self._main_shortcut()
         self.shortcut_capture = ShortcutCapture(form, shortcut, width=170)
-        self._row(form, 0, "录音快捷键", self.shortcut_capture,
-                  hint="点击按键标签后，直接按键盘组合键或鼠标侧键完成设置，Esc 取消。")
+        row = self._row(form, 0, "录音快捷键", self.shortcut_capture,
+                        hint="点击按键标签后，直接按键盘组合键或鼠标侧键完成设置，Esc 取消。")
+        paste_shortcut = self._paste_shortcut()
+        self.paste_capture = ShortcutCapture(form, paste_shortcut, width=170)
+        self._row(form, row, "粘贴快捷键", self.paste_capture,
+                  hint="用这个键录音，松开后一律用剪贴板 Ctrl+V 粘贴上屏，适合远程桌面、"
+                       "虚拟机等逐字输入不好使的场景。建议用鼠标侧键或单独的字母键，"
+                       "不要用 Alt+CapsLock——它是系统的输入法切换组合，会被抑制导致输入法异常。")
+
+    def _main_shortcut(self):
+        for item in self.saved_shortcuts:
+            if not item.get("paste"):
+                return item
+        return DEFAULT_SHORTCUTS[0]
+
+    def _paste_shortcut(self):
+        for item in self.saved_shortcuts:
+            if item.get("paste"):
+                return item
+        return {"key": "", "type": "keyboard"}
 
     def _build_options_card(self, body):
         form = self._card(body, "选项")
         row = self._switch_row(
             form, 0, self.vars["llm_use_gpu"], "启用 GGUF GPU 加速",
-            "为 Fun-ASR / Qwen 的 GGUF 解码启用显卡加速，关闭后仅使用 CPU。")
-        row = self._switch_row(
-            form, row, self.vars["paste"], "使用剪贴板粘贴输出",
-            "用剪贴板粘贴代替逐字键入，适合长文本或输入法不兼容的程序。")
+            "对 Fun-ASR / Qwen 的 GGUF 解码启用显卡加速，关闭后仅使用 CPU。")
         row = self._switch_row(
             form, row, self.vars["keep_microphone_open"], "快速响应",
             "空闲时保持麦克风占用，缩短按下快捷键后的启动延迟。")
@@ -660,13 +693,24 @@ class Launcher(tk.Tk):
         self.apply_hardware_button.pack(side="left", padx=(10, 0))
         self.apply_hardware_button.configure(state="disabled")
 
-    def _shortcut_data(self):
-        if self.shortcut_capture is None:
-            return []
-        value = dict(self.shortcut_capture.value)
+    def _shortcut_entry(self, capture, paste=False):
+        if capture is None:
+            return None
+        value = dict(capture.value)
+        if not value.get("key"):
+            return None
         value["suppress"] = True
         value["hold_mode"] = True
-        return [value] if value.get("key") else []
+        if paste:
+            value["paste"] = True
+        return value
+
+    def _shortcut_data(self):
+        main = self._shortcut_entry(getattr(self, "shortcut_capture", None))
+        paste = self._shortcut_entry(getattr(self, "paste_capture", None), paste=True)
+        if paste and main and paste.get("key") == main.get("key"):
+            paste = None
+        return [entry for entry in (main, paste) if entry]
 
     def _set_hardware_text(self, text):
         lines = max(8, min(26, text.count("\n") + 2))
@@ -820,6 +864,33 @@ class Launcher(tk.Tk):
         self.download_button.configure(
             text="下载模型" if missing else "校验／修复模型",
             state="disabled" if busy or self._model_key() == "openai_api" else "normal")
+        self._update_runtime_status(busy)
+
+    @staticmethod
+    def _runtime_base_dir():
+        return ROOT / "core" / "server" / "engines" / "llama"
+
+    def _runtime_report(self):
+        return verify_llama_runtime(self._runtime_base_dir())
+
+    def _update_runtime_status(self, busy=False):
+        """刷新“推理运行库”一行：仅 GGUF 模型需要该运行库"""
+        if not hasattr(self, "runtime_status"):
+            return
+        if self._model_key() not in GGUF_MODELS:
+            self.runtime_status.configure(text="当前模型无需该运行库",
+                                          style="Hint.TLabel")
+            self.runtime_button.configure(state="disabled")
+            return
+        report = self._runtime_report()
+        if report.fatal:
+            style = "Danger.TLabel"
+        elif report.needs_repair or report.warnings:
+            style = "Field.TLabel"
+        else:
+            style = "Success.TLabel"
+        self.runtime_status.configure(text=report.summary, style=style)
+        self.runtime_button.configure(state="disabled" if busy else "normal")
 
     def _download_model(self):
         if self.download_thread is not None:
@@ -837,30 +908,74 @@ class Launcher(tk.Tk):
                 "将联网校验并下载缺少或损坏的文件，可能需要数 GB 空间。\n是否继续？",
                 parent=self):
             return
+
+        def work(progress, cancel):
+            download_model(name, ROOT, progress, cancel, quantization)
+            return "模型下载并校验完成，可以启动"
+
+        self._run_download(work, "正在连接 ModelScope...",
+                           fail_prefix="模型下载失败", error_title="模型下载失败")
+
+    def _repair_runtime(self, confirm=True):
+        """检查 GGUF 运行库，缺失或损坏时联网下载并覆盖安装"""
+        if self.download_thread is not None:
+            return
+        if self.running or self.starting:
+            messagebox.showinfo("请先停止识别", "停止语音识别后再检测或修复运行库。", parent=self)
+            return
+        report = self._runtime_report()
+        if not report.needs_repair:
+            if confirm:
+                messagebox.showinfo(
+                    "运行库正常",
+                    f"llama.cpp {report.tag} 运行库完整（{len(report.files)} 个文件）。"
+                    + ("\n\n" + "\n".join(report.warnings) if report.warnings else ""),
+                    parent=self)
+            return
+        if confirm and not messagebox.askokcancel(
+                "修复推理运行库",
+                "检测到以下问题：\n" + "\n".join(report.problems) +
+                "\n\n将从官网下载 llama.cpp 运行库（约 33 MB）并校验后覆盖安装。\n"
+                "下载会走系统代理设置；如无法访问 GitHub，也可自行下载后解压到：\n"
+                f"{self._runtime_base_dir() / 'bin'}\n\n是否继续？",
+                parent=self):
+            return
+
+        def work(progress, cancel):
+            return download_llama_runtime(ROOT, progress, cancel)
+
+        self._run_download(work, "正在连接 GitHub...",
+                           fail_prefix="运行库修复失败", error_title="运行库修复失败")
+
+    def _run_download(self, work, start_status, fail_prefix="下载失败", error_title="下载失败"):
+        """在后台线程执行 work(progress, cancel)，完成后把消息投递到 download_events"""
         self.download_cancel.clear()
+        self.download_error_title = error_title
         self.download_progress.configure(value=0)
         self.download_progress.grid()
-        self.status.set("正在连接 ModelScope...")
+        self.status.set(start_status)
         self.start_button.configure(state="disabled")
         self.cancel_download_button.configure(state="normal")
 
         def worker():
             last_update = 0
+
             def progress(label, done, total):
                 nonlocal last_update
                 now = time.monotonic()
                 if now - last_update >= 0.15 or done == total:
                     self.download_events.put(("progress", (label, done, total)))
                     last_update = now
+
             try:
-                download_model(name, ROOT, progress, self.download_cancel, quantization)
-                self.download_events.put(("done", "模型下载并校验完成，可以启动"))
+                message = work(progress, self.download_cancel)
+                self.download_events.put(("done", message))
             except DownloadCancelled:
-                self.download_events.put(("done", "下载已取消，已完成的模型文件保留"))
+                self.download_events.put(("done", "下载已取消，已完成的文件保留"))
             except PermissionError:
                 self.download_events.put(("error", "安装目录不可写，请安装到当前用户有写入权限的目录。"))
             except Exception as exc:
-                self.download_events.put(("error", f"模型下载失败：{exc}"))
+                self.download_events.put(("error", f"{fail_prefix}：{exc}"))
 
         self.download_thread = threading.Thread(target=worker, daemon=True)
         self.download_thread.start()
@@ -886,8 +1001,14 @@ class Launcher(tk.Tk):
                 self.download_progress.grid_remove()
                 self.status.set(value)
                 self._update_model_info()
+                repair_pending = self.start_after_repair
+                self.start_after_repair = False
                 if event == "error":
-                    messagebox.showerror("模型下载失败", value, parent=self)
+                    messagebox.showerror(getattr(self, "download_error_title", "下载失败"),
+                                         value, parent=self)
+                    return
+                if repair_pending:
+                    self._start()
                 return
         self.after(150, self._poll_download)
 
@@ -972,7 +1093,10 @@ class Launcher(tk.Tk):
             messagebox.showerror("配置无效", str(exc))
             return False
         if not quiet:
-            messagebox.showinfo("已保存", "设置已保存到 config_gui.json")
+            messagebox.showinfo("已保存",
+                                "设置已保存到 config_gui.json\n\n"
+                                "快捷键改动会在客户端运行中几秒内自动生效，"
+                                "不需要重启。")
         return True
 
     def _start(self):
@@ -1015,15 +1139,13 @@ class Launcher(tk.Tk):
         if not self._save(quiet=True):
             return
         self._stop_processes()
-        (CONFIG.parent / "logs" / "asr-error.json").unlink(missing_ok=True)
+        log_dir = CONFIG.parent / "logs"
+        (log_dir / "asr-error.json").unlink(missing_ok=True)
+        # 上次进程被强杀时留下的就绪/录音标记
+        for stale in list(log_dir.glob(".ready-*")) + list(log_dir.glob(".recording-*")):
+            stale.unlink(missing_ok=True)
         info = MODEL_INFO[self._model_key()]
         missing = missing_files(ROOT, self._model_key(), self.vars["qwen_quantization"].get())
-        if self._model_key() in ("qwen_asr", "fun_asr_nano"):
-            llama_dir = ROOT / "core" / "server" / "engines" / "llama" / "bin"
-            dll_name = "llama.dll" if os.name == "nt" else "libllama.so"
-            if not (llama_dir / dll_name).exists():
-                missing.append(
-                    f"core/server/engines/llama/bin/{dll_name}（GGUF 推理运行库）")
         if missing:
             messagebox.showerror(
                 "模型未安装",
@@ -1033,6 +1155,22 @@ class Launcher(tk.Tk):
             )
             self._update_model_info()
             return
+        if self._model_key() in GGUF_MODELS:
+            report = self._runtime_report()
+            if report.fatal:
+                answer = messagebox.askokcancel(
+                    "推理运行库异常",
+                    "检测到 llama.cpp 运行库异常：\n" + "\n".join(report.problems) +
+                    "\n\n不修复则识别服务无法启动。是否现在下载修复？",
+                    parent=self)
+                self._update_model_info()
+                if not answer:
+                    return
+                self.start_after_repair = True
+                self._repair_runtime(confirm=False)
+                return
+            if report.needs_repair or report.warnings:
+                self.status.set(report.summary)
         self.starting = True
         self.deadline = time.monotonic() + 180
         self.status.set("正在加载模型...")
@@ -1071,20 +1209,25 @@ class Launcher(tk.Tk):
     def _check_children(self):
         self.monitor = None
         error_path = CONFIG.parent / "logs" / "asr-error.json"
+        specific_error = None
         if error_path.exists():
             try:
-                error = json.loads(error_path.read_text(encoding="utf-8"))["error"]
+                specific_error = json.loads(error_path.read_text(encoding="utf-8"))["error"]
                 error_path.unlink()
-                self.status.set(error)
+                self.status.set(specific_error)
                 if self.tray_icon:
-                    self.tray_icon.notify(error, "语音识别失败")
+                    self.tray_icon.notify(specific_error, "语音识别失败")
             except (OSError, ValueError, KeyError, NotImplementedError):
-                pass
+                specific_error = None
         failed = [p for p in self.processes if p.poll() is not None]
         if failed:
-            self._fail("组件退出：" + ", ".join(
+            detail = ", ".join(
                 f"{getattr(p, 'sai_role', 'unknown')} 退出码 {p.returncode}"
-                for p in failed))
+                for p in failed)
+            if specific_error:
+                self._fail(f"{specific_error}（{detail}）")
+            else:
+                self._fail("组件退出：" + detail)
             return
         if self.starting:
             if time.monotonic() > self.deadline:
@@ -1101,13 +1244,30 @@ class Launcher(tk.Tk):
             if client_ready and client_ready.exists():
                 self.starting = False
                 self.running = True
-                self.status.set("运行中 | CapsLock 按住录音，松开输入 | F8 开始/停止")
+                self.status.set(self._running_status_text())
                 self.start_button.configure(state="normal", text="保存并重启")
+                # 启动完成后就不再需要标记文件
+                for ready in self.ready_files.values():
+                    ready.unlink(missing_ok=True)
                 if self.tray_icon and self.tray_icon.visible:
                     self.withdraw()
         self._refresh_recording_indicator()
         if self.processes:
             self.monitor = self.after(500, self._check_children)
+
+    def _running_status_text(self):
+        capture = getattr(self, "shortcut_capture", None)
+        key = capture.value.get("key", "") if capture is not None else ""
+        label = shortcut_label(key) if key else ""
+        if not label:
+            return "运行中 | 快捷键已就绪"
+        text = f"运行中 | {label} 按住录音，松开输入"
+        paste_capture = getattr(self, "paste_capture", None)
+        paste_key = paste_capture.value.get("key", "") if paste_capture is not None else ""
+        paste_label = shortcut_label(paste_key) if paste_key else ""
+        if paste_label and paste_label != label:
+            text += f" | {paste_label} 粘贴输出"
+        return text
 
     def _refresh_recording_indicator(self):
         """按下快捷键录音时，托盘图标换成红色，松开恢复蓝色"""

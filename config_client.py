@@ -5,7 +5,7 @@ from pathlib import Path
 from core.runtime_paths import DATA_DIR
 
 # 版本信息
-__version__ = '1.0.1'
+__version__ = '1.0.2'
 
 # 项目根目录
 BASE_DIR = str(DATA_DIR)
@@ -45,6 +45,10 @@ class ClientConfig:
 
     paste        = _gui_value('paste', False)
     restore_clip = True         # 模拟粘贴后是否恢复剪贴板
+    # 写入剪贴板后、发送 Ctrl+V 前等待的秒数（远程桌面等慢目标会再乘系数）
+    paste_settle_delay = _gui_value('paste_settle_delay', 0.12)
+    # 发送 Ctrl+V 后等待多久再恢复剪贴板；太快恢复会让慢目标粘到旧内容
+    restore_clip_delay = _gui_value('restore_clip_delay', 0.5)
     paste_apps   = ['WeiXin.exe', 'Telegram.exe']  # 匹配时强制粘贴
 
     enter_apps   = [('happ.exe', 0.5), ('hexin.exe', 0.5)]  # (应用名, 延迟秒数) 输出完成后自动回车，如同花顺，输入股票名后，需要回车才能切换
@@ -105,6 +109,7 @@ r"""
   suppress   - 是否阻塞按键（True=阻塞，False=不阻塞）
   hold_mode  - 长按模式（True=按下录音松开停止，False=单击开始再次单击停止）
   enabled    - 是否启用此快捷键
+  paste      - 该快捷键的识别结果一律用剪贴板 Ctrl+V 粘贴（适合远程桌面等场景）
 
 阻塞模式说明：
   - 阻塞模式  ：长按录音识别，短按（<0.3秒）则自动补发按键，不影响单击功能
@@ -138,4 +143,5 @@ r"""
   {'key': 'caps_lock', 'type': 'keyboard', 'suppress': False, 'hold_mode': True, 'enabled': True}, 
   {'key': 'f12', 'type': 'keyboard', 'suppress': True, 'hold_mode': True, 'enabled': True}, 
   {'key': 'x2', 'type': 'mouse', 'suppress': True, 'hold_mode': True, 'enabled': True}, 
+  {'key': 'x1', 'type': 'mouse', 'suppress': True, 'hold_mode': True, 'enabled': True, 'paste': True}, 
 """

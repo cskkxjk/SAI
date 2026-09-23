@@ -49,7 +49,7 @@ def _get_windows_window_info() -> dict:
             import psutil
             process = psutil.Process(pid)
             process_name = process.name()
-        except:
+        except Exception:
             process_name = ""
 
         # 推测应用名称

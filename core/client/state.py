@@ -69,6 +69,9 @@ class ClientState:
     
     # 最近一次输出内容（如果是 LLM 润色，则是润色结果；否则是原始识别结果）
     last_output_text: Optional[str] = None
+
+    # 当前录音来自“粘贴快捷键”时为 True；None 表示按配置决定输出方式
+    paste_override: Optional[bool] = None
     
 
     
@@ -102,6 +105,7 @@ class ClientState:
         # 重置其他状态
         self.recording = False
         self.recording_start_time = 0.0
+        self.paste_override = None
         self._update_recording_indicator(False)
         self.audio_files.clear()
         
@@ -135,6 +139,16 @@ class ClientState:
         self._update_recording_indicator(False)
         logger.debug(f"录音状态已更新: recording=False, duration={duration:.2f}s")
         return duration
+
+    def set_paste_override(self, value: Optional[bool]) -> None:
+        """记录本次录音的输出方式偏好（True = 强制剪贴板粘贴，None = 按配置）"""
+        self.paste_override = value
+
+    def consume_paste_override(self) -> Optional[bool]:
+        """取走本次录音的输出方式偏好，供结果输出时使用一次"""
+        value = self.paste_override
+        self.paste_override = None
+        return value
 
     def _update_recording_indicator(self, active: bool) -> None:
         """录音状态变化时通知托盘与启动器（未启用时忽略）"""

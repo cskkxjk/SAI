@@ -16,6 +16,9 @@ from core.client.clipboard.clipboard import (
     copy_to_clipboard,
     save_and_restore_clipboard,
     paste_text,
+    is_remote_target,
+    needs_paste_for_remote,
+    REMOTE_TYPE_INTERVAL,
     CLIPBOARD_ENCODINGS,
 )
 
@@ -26,5 +29,8 @@ __all__ = [
     'copy_to_clipboard',
     'save_and_restore_clipboard',
     'paste_text',
+    'is_remote_target',
+    'needs_paste_for_remote',
+    'REMOTE_TYPE_INTERVAL',
     'CLIPBOARD_ENCODINGS',
 ]

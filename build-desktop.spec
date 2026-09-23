@@ -36,7 +36,8 @@ a = Analysis(
     runtime_hooks=["build_hook.py"],
     excludes=["IPython", "PySide6", "PySide2", "PyQt5", "matplotlib",
               "wx", "torch", "funasr", "transformers", "datasets",
-              "sklearn", "pandas", "pyarrow"],
+              "sklearn", "pandas", "pyarrow",
+              "soynlp", "scipy", "Cython", "cython", "lxml", "pydoc_data"],
     noarchive=True,
 )
 private = ("core", "config_client", "config_server", "LLM")
@@ -48,6 +49,7 @@ a.datas = [(name, src, kind) for name, src, kind in a.datas
 exe = EXE(
     PYZ(a.pure), a.scripts, [], exclude_binaries=True,
     name="SAI", console=False, icon=str(root / "assets/icon.ico"),
+    version=str(root / "installer/file_version_info.txt"),
     contents_directory="internal", upx=False,
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="SAI", upx=False)

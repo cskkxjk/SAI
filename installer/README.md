@@ -10,9 +10,14 @@ uv run --locked --group build python -m PyInstaller --noconfirm --distpath build
 ```
 
 The compiler path depends on where Inno Setup was installed.
-Output: `dist/installer/SAI-1.0.1-Setup.exe`.
+Output: `dist/installer/SAI-1.0.2-Setup.exe`.
 This single-file installer contains the program and runtime, but no model weights.
 Old `Setup-*.bin` files are no longer needed.
+
+When bumping the version, update `config_client.py`, `config_server.py`,
+`pyproject.toml`, `uv.lock`, `readme.md`, `installer/SAI.iss`,
+`installer/README.md` and `installer/file_version_info.txt` (the EXE version
+resource shown in file properties).
 
 The wizard offers a destination directory, Start Menu shortcuts,
 an optional desktop shortcut and an uninstaller. It installs for the current user

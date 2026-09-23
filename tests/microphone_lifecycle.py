@@ -37,6 +37,7 @@ class MicrophoneLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         self.recorder = SimpleNamespace(record_and_send=record)
         self.shortcut = SimpleNamespace(key="caps_lock", suppress=True,
+                                        paste=False,
                                         is_toggle_key=lambda: True)
         self.task = ShortcutTask(self.app, self.shortcut, lambda app: self.recorder)
         self.task._status = Mock()

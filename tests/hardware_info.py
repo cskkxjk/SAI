@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.hardware_info import GIB, recommend, format_hardware
+from core.hardware_info import GIB, merge_duplicate_gpus, recommend, format_hardware
 
 
 def hardware(vram=8, vendor=0x1002, ram=32, free=16, vulkan=True):
@@ -22,7 +22,22 @@ class RecommendationTests(unittest.TestCase):
             self.assertEqual(result["model_type"], "qwen_asr")
             self.assertEqual(result["qwen_quantization"], "q5_k")
             self.assertTrue(result["llm_use_gpu"])
-            self.assertFalse(result["gpu_boost_enabled"])
+
+    def test_duplicate_adapters_are_merged(self):
+        gpu = dict(name="RTX 4070", vendor_id=0x10DE, vendor="NVIDIA",
+                   dedicated_bytes=8 * GIB, shared_bytes=16 * GIB)
+        duplicated = [dict(gpu), dict(gpu, shared_bytes=32 * GIB),
+                      dict(name="Intel Iris Xe", vendor_id=0x8086, vendor="Intel",
+                           dedicated_bytes=128 << 20, shared_bytes=16 * GIB)]
+        merged = merge_duplicate_gpus(duplicated)
+        self.assertEqual(len(merged), 2)
+        self.assertEqual([item["name"] for item in merged],
+                         ["RTX 4070", "Intel Iris Xe"])
+        self.assertEqual(merged[0]["shared_bytes"], 32 * GIB)
+
+        info = hardware()
+        info["recommendation"] = recommend(info)
+        self.assertNotIn("预加速", format_hardware(info))
 
     def test_small_dedicated_gpu_q4(self):
         self.assertEqual(recommend(hardware(vram=3))["settings"]["qwen_quantization"], "q4_k")

@@ -1,11 +1,19 @@
 import unittest
+import hashlib
+import importlib
+import io
 import json
+import os
+import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
 
 from core.server.engines.onnx_session import OnnxSession
 from core.server.engines.fun_asr_gguf.inference.encoder import AudioEncoder
@@ -332,6 +340,589 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(sai.transcription_request(["--self-test", str(audio)]), [])
             self.assertEqual(sai.transcription_request(["--server", "--client"]), [])
             self.assertEqual(sai.transcription_request([str(Path(folder) / "missing.wav")]), [])
+
+
+    def test_paste_text_waits_for_the_clipboard_before_and_after_the_paste(self):
+        import asyncio
+        from unittest.mock import MagicMock
+        from core.client.clipboard import clipboard
+
+        written = []
+        state = {"value": "用户原来的剪贴板内容"}
+        controller = MagicMock()
+        sleeps = []
+
+        def fake_copy(value):
+            written.append(value)
+            state["value"] = value
+
+        async def fake_sleep(seconds):
+            sleeps.append(seconds)
+
+        with patch.object(clipboard.pyclip, "copy", fake_copy), \
+                patch.object(clipboard.pyclip, "paste",
+                             lambda: state["value"].encode("utf-8")), \
+                patch.object(clipboard.keyboard, "Controller",
+                             return_value=controller), \
+                patch.object(clipboard.asyncio, "sleep", fake_sleep), \
+                patch.object(clipboard, "_target_delay_factor", lambda: 1.0), \
+                patch.object(ClientConfig, "paste_settle_delay", 0.12), \
+                patch.object(ClientConfig, "restore_clip_delay", 0.5):
+            asyncio.run(clipboard.paste_text("识别结果", restore_clipboard=True))
+
+        self.assertEqual(written, ["识别结果", "用户原来的剪贴板内容"])
+        self.assertEqual(sleeps, [0.12, 0.5])
+        controller.tap.assert_called_once_with("v")
+
+    def test_paste_text_scales_delays_for_remote_desktop_targets(self):
+        import asyncio
+        from unittest.mock import MagicMock
+        from core.client.clipboard import clipboard
+
+        for process_name in ("mstsc.exe", "rvlsession.exe"):
+            state = {"value": "旧内容"}
+            controller = MagicMock()
+            sleeps = []
+
+            async def fake_sleep(seconds, _sleeps=sleeps):
+                _sleeps.append(seconds)
+
+            with patch.object(clipboard.pyclip, "copy",
+                              lambda value: state.update(value=value)), \
+                    patch.object(clipboard.pyclip, "paste",
+                                 lambda: state["value"].encode("utf-8")), \
+                    patch.object(clipboard.keyboard, "Controller",
+                                 return_value=controller), \
+                    patch.object(clipboard.asyncio, "sleep", fake_sleep), \
+                    patch("core.tools.window_detector.get_active_window_info",
+                          return_value={"process_name": process_name}), \
+                    patch.object(ClientConfig, "paste_settle_delay", 0.2), \
+                    patch.object(ClientConfig, "restore_clip_delay", 0.5):
+                asyncio.run(clipboard.paste_text("识别结果", restore_clipboard=True))
+
+            self.assertAlmostEqual(sleeps[0], clipboard.SLOW_TARGET_SETTLE_DELAY,
+                                   msg=process_name)
+            self.assertAlmostEqual(sleeps[1], clipboard.SLOW_TARGET_RESTORE_DELAY,
+                                   msg=process_name)
+            self.assertEqual(state["value"], "旧内容", msg=process_name)
+
+    def test_paste_text_keeps_a_newer_clipboard_copy(self):
+        import asyncio
+        from unittest.mock import MagicMock
+        from core.client.clipboard import clipboard
+
+        written = []
+        state = {"value": "用户原来的剪贴板内容"}
+        controller = MagicMock()
+
+        def fake_copy(value):
+            written.append(value)
+            state["value"] = value
+
+        async def fake_sleep(seconds):
+            state["value"] = "用户新复制的内容"
+
+        with patch.object(clipboard.pyclip, "copy", fake_copy), \
+                patch.object(clipboard.pyclip, "paste",
+                             lambda: state["value"].encode("utf-8")), \
+                patch.object(clipboard.keyboard, "Controller",
+                             return_value=controller), \
+                patch.object(clipboard.asyncio, "sleep", fake_sleep), \
+                patch.object(clipboard, "_target_delay_factor", lambda: 1.0), \
+                patch.object(ClientConfig, "paste_settle_delay", 0.12), \
+                patch.object(ClientConfig, "restore_clip_delay", 0.5):
+            asyncio.run(clipboard.paste_text("识别结果", restore_clipboard=True))
+
+        self.assertEqual(written, ["识别结果"])
+        self.assertEqual(state["value"], "用户新复制的内容")
+
+    def test_remote_target_needs_paste_only_for_non_ascii_text(self):
+        from core.client.clipboard import needs_paste_for_remote
+
+        with patch("core.tools.window_detector.get_active_window_info",
+                   return_value={"process_name": "mstsc.exe"}):
+            self.assertTrue(needs_paste_for_remote("你好，世界"))
+            self.assertFalse(needs_paste_for_remote("hello world"))
+        with patch("core.tools.window_detector.get_active_window_info",
+                   return_value={"process_name": "notepad.exe"}):
+            self.assertFalse(needs_paste_for_remote("你好"))
+
+    def test_typing_into_a_remote_target_uses_pynput(self):
+        from core.client.output.text_output import TextOutput
+
+        with patch("core.client.clipboard.is_remote_target", return_value=True), \
+                patch("core.client.output.text_output.PynputController") as controller, \
+                patch("core.client.output.text_output.keyboard.write") as write:
+            TextOutput()._type_text("ab")
+            controller.assert_called_once()
+            self.assertEqual([call.args for call in controller.return_value.type.call_args_list],
+                             [("a",), ("b",)])
+            write.assert_not_called()
+
+        with patch("core.client.clipboard.is_remote_target", return_value=False), \
+                patch("core.client.output.text_output.PynputController") as controller, \
+                patch("core.client.output.text_output.keyboard.write") as write:
+            TextOutput()._type_text("hello")
+            write.assert_called_once_with("hello")
+            controller.assert_not_called()
+
+    def test_output_falls_back_to_paste_for_remote_chinese(self):
+        import asyncio
+        from core.client.output.text_output import TextOutput
+
+        async def fake_paste(*args, **kwargs):
+            return None
+
+        with patch("core.client.clipboard.needs_paste_for_remote", return_value=True), \
+                patch("core.client.clipboard.paste_text", side_effect=fake_paste) as paste, \
+                patch("core.client.output.text_output.type_text") as type_text:
+            asyncio.run(TextOutput().output("你好，世界", paste=False))
+
+        paste.assert_called_once()
+        self.assertEqual(paste.call_args.args, ("你好，世界",))
+        type_text.assert_not_called()
+
+    def test_output_types_locally_through_a_worker_thread(self):
+        import asyncio
+        from core.client.output.text_output import TextOutput
+
+        with patch("core.client.clipboard.needs_paste_for_remote", return_value=False), \
+                patch("core.client.output.text_output.type_text") as type_text:
+            asyncio.run(TextOutput().output("hello", paste=False))
+
+        type_text.assert_called_once_with("hello")
+
+    def test_stuck_modifiers_are_released_on_startup(self):
+        from core.tools import stuck_keys
+
+        class FakeUser32:
+            def __init__(self):
+                self.lifted = []
+
+            def GetAsyncKeyState(self, vk):
+                return 0x8000 if vk == 0xA2 else 0
+
+            def keybd_event(self, vk, scan, flags, extra):
+                self.lifted.append((vk, flags))
+
+        fake = FakeUser32()
+        with patch.object(stuck_keys.ctypes, "windll", SimpleNamespace(user32=fake)):
+            released = stuck_keys.release_stuck_modifiers()
+
+        self.assertEqual(released, ["左 Ctrl"])
+        self.assertEqual(fake.lifted, [(0xA2, stuck_keys.KEYEVENTF_KEYUP)])
+
+    def test_paste_text_retries_when_the_clipboard_write_does_not_stick(self):
+        import asyncio
+        from unittest.mock import MagicMock
+        from core.client.clipboard import clipboard
+
+        attempts = []
+        state = {"value": "旧内容"}
+        controller = MagicMock()
+
+        def flaky_copy(value):
+            attempts.append(value)
+            if len(attempts) > 1:
+                state["value"] = value
+
+        async def fake_sleep(seconds):
+            pass
+
+        with patch.object(clipboard.pyclip, "copy", flaky_copy), \
+                patch.object(clipboard.pyclip, "paste",
+                             lambda: state["value"].encode("utf-8")), \
+                patch.object(clipboard.keyboard, "Controller",
+                             return_value=controller), \
+                patch.object(clipboard.asyncio, "sleep", fake_sleep), \
+                patch.object(clipboard, "_target_delay_factor", lambda: 1.0), \
+                patch.object(ClientConfig, "restore_clip_delay", 0.5):
+            asyncio.run(clipboard.paste_text("识别结果", restore_clipboard=True))
+
+        self.assertEqual(attempts, ["识别结果", "识别结果", "旧内容"])
+        controller.tap.assert_called_once_with("v")
+
+
+    def test_shortcut_dataclass_accepts_the_paste_flag(self):
+        from core.client.shortcut.shortcut_config import Shortcut
+        shortcut = Shortcut(**{
+            "key": "x1", "type": "mouse", "suppress": True,
+            "hold_mode": True, "enabled": True, "paste": True,
+        })
+        self.assertTrue(shortcut.paste)
+        self.assertFalse(Shortcut(key="caps_lock").paste)
+
+    def test_paste_override_survives_until_it_is_consumed(self):
+        from core.client.state import ClientState
+        state = ClientState()
+        self.assertIsNone(state.consume_paste_override())
+        state.set_paste_override(True)
+        self.assertTrue(state.consume_paste_override())
+        self.assertIsNone(state.consume_paste_override())
+        state.set_paste_override(True)
+        state.reset()
+        self.assertIsNone(state.consume_paste_override())
+
+    def test_paste_shortcut_marks_only_its_own_recording(self):
+        import asyncio
+        import threading
+        from core.client.shortcut.shortcut_config import Shortcut
+        from core.client.shortcut.task import ShortcutTask
+        from core.client.state import ClientState
+
+        async def idle_session(self):
+            return None
+
+        def fake_submit(coro, loop):
+            coro.close()
+            return Mock()
+
+        for paste, expected in ((True, True), (False, None)):
+            state = ClientState()
+            app = SimpleNamespace(
+                state=state,
+                loop=Mock(),
+                stream=SimpleNamespace(session_lock=threading.Lock()),
+            )
+            task = ShortcutTask(app, Shortcut(key="x1", type="mouse", paste=paste))
+            with patch.object(ShortcutTask, "_run_session", idle_session), \
+                    patch.object(asyncio, "run_coroutine_threadsafe", fake_submit):
+                task.launch()
+            self.assertEqual(state.paste_override, expected)
+            task.finish()
+            # 标记保留到结果输出时被取走消费
+            self.assertEqual(state.paste_override, expected)
+
+    def test_launcher_saves_two_shortcuts_with_distinct_roles(self):
+        import gui_launcher
+        launcher = gui_launcher.Launcher.__new__(gui_launcher.Launcher)
+        launcher.shortcut_capture = SimpleNamespace(
+            value={"key": "caps_lock", "type": "keyboard"})
+        launcher.paste_capture = SimpleNamespace(
+            value={"key": "x1", "type": "mouse"})
+
+        data = launcher._shortcut_data()
+
+        self.assertEqual([item["key"] for item in data], ["caps_lock", "x1"])
+        self.assertTrue(data[1]["paste"])
+        self.assertTrue(all(item["suppress"] and item["hold_mode"] for item in data))
+        self.assertNotIn("paste", data[0])
+
+        launcher.paste_capture = SimpleNamespace(
+            value={"key": "caps_lock", "type": "keyboard"})
+        self.assertEqual(len(launcher._shortcut_data()), 1)
+
+        launcher.paste_capture = SimpleNamespace(value={"key": "", "type": "keyboard"})
+        launcher.shortcut_capture = SimpleNamespace(value={"key": "", "type": "keyboard"})
+        self.assertEqual(launcher._shortcut_data(), [])
+
+
+class ShortcutHotReloadTests(unittest.TestCase):
+    """快捷键配置热重载（免重启）"""
+
+    @staticmethod
+    def _manager(shortcuts):
+        from core.client.shortcut.shortcut_manager import ShortcutManager
+        from core.client.state import ClientState
+        app = SimpleNamespace(state=ClientState())
+        return ShortcutManager(app, shortcuts)
+
+    def test_load_shortcuts_reads_the_gui_config(self):
+        from core.client.shortcut.shortcut_config import load_shortcuts
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config_gui.json"
+            path.write_text(json.dumps({"shortcuts": [
+                {"key": "caps_lock", "type": "keyboard", "unknown": 1},
+                {"key": "x1", "type": "mouse", "paste": True},
+                {"key": "", "type": "keyboard"},
+            ]}), encoding="utf-8")
+            shortcuts = load_shortcuts(path)
+            self.assertEqual([item.key for item in shortcuts], ["caps_lock", "x1"])
+            self.assertTrue(shortcuts[1].paste)
+            self.assertFalse(load_shortcuts(Path(folder) / "missing.json"))
+
+    def test_reload_rebuilds_tasks_in_place(self):
+        from core.client.shortcut.shortcut_config import Shortcut
+        from core.client.shortcut.shortcut_manager import ShortcutManager
+        manager = self._manager([Shortcut(key="caps_lock")])
+        with patch.object(ShortcutManager, "start", lambda self: None):
+            manager.reload([Shortcut(key="x1", type="mouse", paste=True)])
+        self.assertEqual(set(manager.tasks), {"x1"})
+        self.assertTrue(manager.tasks["x1"].shortcut.paste)
+
+    def test_config_watcher_only_reloads_when_the_file_changes(self):
+        from core.client.shortcut import shortcut_manager as module
+        from core.client.shortcut.shortcut_config import Shortcut
+        manager = self._manager([Shortcut(key="caps_lock")])
+        fresh = [Shortcut(key="f9")]
+        with patch.object(module, "load_shortcuts", lambda path=None: fresh), \
+                patch.object(module.ShortcutManager, "start", lambda self: None):
+            self.assertTrue(manager._poll_config())
+            self.assertEqual(set(manager.tasks), {"f9"})
+            self.assertFalse(manager._poll_config())
+
+    def test_config_watcher_thread_starts_and_stops(self):
+        from core.client.shortcut import shortcut_manager as module
+        from core.client.shortcut.shortcut_config import Shortcut
+        manager = self._manager([Shortcut(key="caps_lock")])
+        with patch.object(module, "load_shortcuts", lambda path=None: []):
+            manager.start_config_watcher()
+            self.assertTrue(manager._config_thread.is_alive())
+            manager.stop_config_watcher()
+        self.assertIsNone(manager._config_thread)
+
+
+class LlamaRuntimeTests(unittest.TestCase):
+    """GGUF 引擎的运行库定位、转发层与错误上报"""
+
+    def test_runtime_resolves_the_shared_engine_bin(self):
+        from core.tools.llama_runtime import check_llama_bin, main_lib_name
+        runtime_dir = ROOT / "core" / "server" / "engines" / "llama"
+        if not (runtime_dir / "bin" / main_lib_name()).is_file():
+            self.skipTest("本机未放置 llama.cpp 运行库")
+        self.assertEqual(check_llama_bin(runtime_dir), runtime_dir / "bin")
+
+    def test_runtime_env_override_wins(self):
+        from core.tools.llama_runtime import ENV_BIN, main_lib_name, resolve_llama_bin
+        with tempfile.TemporaryDirectory() as directory:
+            override = Path(directory)
+            (override / main_lib_name()).write_bytes(b"")
+            with patch.dict(os.environ, {ENV_BIN: str(override)}):
+                self.assertEqual(resolve_llama_bin(Path(directory) / "other"), override)
+
+    def test_runtime_reports_a_readable_error_when_missing(self):
+        from core.tools.llama_runtime import ENV_BIN, LlamaRuntimeError, main_lib_name, resolve_llama_bin
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "llama"
+            with patch.dict(os.environ, {ENV_BIN: ""}):
+                with self.assertRaises(LlamaRuntimeError) as caught:
+                    resolve_llama_bin(base)
+            message = str(caught.exception)
+            self.assertIn(main_lib_name(), message)
+            self.assertIn(str(base / "bin"), message)
+            self.assertIn("重新安装 SAI", message)
+
+    def test_engine_llama_modules_forward_to_the_shared_binding(self):
+        for engine in ("fun_asr_gguf", "qwen_asr_gguf", "force_aligner_gguf"):
+            source = (ROOT / "core" / "server" / "engines" / engine /
+                      "inference" / "llama.py").read_text(encoding="utf-8")
+            self.assertIn("from ...llama.llama import", source, engine)
+            self.assertNotIn("os.chdir", source, engine)
+            self.assertNotIn("Path(__file__)", source, engine)
+
+    def test_engines_no_longer_expect_their_own_runtime_directory(self):
+        owned = list(ROOT.glob("core/server/engines/*/inference/bin"))
+        self.assertEqual(owned, [])
+
+    def test_worker_writes_a_readable_error_file(self):
+        import core.runtime_paths as runtime_paths
+        from core.server.worker.worker import RecognizerWorker
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(runtime_paths, "DATA_DIR", Path(directory)):
+                RecognizerWorker._write_fatal_error(
+                    RuntimeError("llama.cpp 运行库缺失：未找到 llama.dll"))
+            payload = json.loads(
+                (Path(directory) / "logs" / "asr-error.json").read_text(encoding="utf-8"))
+            self.assertIn("llama.cpp 运行库缺失", payload["error"])
+            self.assertIn("RuntimeError", payload["detail"])
+
+    def test_launcher_reports_the_specific_error_before_the_exit_code(self):
+        import gui_launcher
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "logs").mkdir()
+            error_path = root / "logs" / "asr-error.json"
+            error_path.write_text(
+                json.dumps({"error": "识别服务异常：llama.cpp 运行库缺失"}),
+                encoding="utf-8")
+            launcher = gui_launcher.Launcher.__new__(gui_launcher.Launcher)
+            launcher.monitor = None
+            launcher.status = Mock()
+            launcher.tray_icon = None
+            launcher.processes = [SimpleNamespace(
+                poll=lambda: 1, sai_role="server", returncode=1)]
+            launcher._fail = Mock()
+            with patch.object(gui_launcher, "CONFIG", root / "config_gui.json"):
+                launcher._check_children()
+            message = launcher._fail.call_args[0][0]
+            self.assertIn("llama.cpp 运行库缺失", message)
+            self.assertIn("server 退出码 1", message)
+            self.assertFalse(error_path.exists())
+
+
+    def test_verify_reports_missing_corrupt_and_repairable_files(self):
+        from core.tools.llama_runtime import ENV_BIN, verify_llama_runtime
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "llama"
+            (base / "bin").mkdir(parents=True)
+            with patch.dict(os.environ, {ENV_BIN: ""}):
+                report = verify_llama_runtime(base)
+                self.assertIsNone(report.directory)
+                self.assertTrue(report.fatal)
+                self.assertIn("未安装", report.summary)
+                payload = b"MZ" + b"\0" * 2048
+                for name in ("ggml.dll", "ggml-base.dll", "llama.dll"):
+                    (base / "bin" / name).write_bytes(payload)
+                report = verify_llama_runtime(base)
+                self.assertFalse(report.fatal)
+                self.assertEqual(report.directory, base / "bin")
+                self.assertIn("ggml-vulkan.dll", report.missing)
+                self.assertTrue(report.needs_repair)
+                (base / "bin" / "ggml-vulkan.dll").write_bytes(payload)
+                report = verify_llama_runtime(base)
+                self.assertFalse(report.needs_repair)
+                self.assertIn("正常", report.summary)
+                (base / "bin" / "ggml-vulkan.dll").write_bytes(b"")
+                report = verify_llama_runtime(base)
+                self.assertIn("ggml-vulkan.dll", report.corrupt)
+                self.assertTrue(report.fatal)
+                self.assertIn("损坏", report.summary)
+
+    def test_runtime_download_source_prefers_the_environment(self):
+        from core.tools.llama_runtime import (ENV_SHA256, ENV_URL,
+                                              runtime_download_digest,
+                                              runtime_download_url)
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "llama"
+            with patch.dict(os.environ, {ENV_URL: "http://mirror/runtime.zip",
+                                         ENV_SHA256: "AB" * 32}):
+                self.assertEqual(runtime_download_url(missing),
+                                 "http://mirror/runtime.zip")
+                self.assertEqual(runtime_download_digest(missing), "ab" * 32)
+            with patch.dict(os.environ, {ENV_URL: "", ENV_SHA256: ""}):
+                self.assertIn("llama.cpp/releases/download/b10621/",
+                              runtime_download_url(missing))
+
+    def test_install_runtime_unpacks_only_dlls_flat(self):
+        from core.model_download import install_llama_runtime
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "runtime.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("build/bin/llama.dll", b"MZ" + b"\0" * 2048)
+                bundle.writestr("build/bin/ggml-vulkan.dll", b"MZ" + b"\0" * 2048)
+                bundle.writestr("llama-cli.exe", b"MZ")
+                bundle.writestr("README.md", "hi")
+            bin_dir = root / "bin"
+            self.assertEqual(install_llama_runtime(archive, bin_dir), 2)
+            self.assertTrue((bin_dir / "llama.dll").is_file())
+            self.assertFalse((bin_dir / "llama-cli.exe").exists())
+            self.assertFalse((bin_dir / "README.md").exists())
+            with zipfile.ZipFile(root / "empty.zip", "w") as bundle:
+                bundle.writestr("README.md", "hi")
+            with self.assertRaises(RuntimeError):
+                install_llama_runtime(root / "empty.zip", bin_dir)
+
+    def test_download_runtime_verifies_and_installs_the_archive(self):
+        from core.model_download import download_llama_runtime
+        from core.tools.llama_runtime import ENV_BIN, ENV_SHA256, ENV_URL
+
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w") as bundle:
+            for name in ("ggml.dll", "ggml-base.dll", "llama.dll"):
+                bundle.writestr(f"build/bin/{name}", b"MZ" + b"\0" * 2048)
+        archive = payload.getvalue()
+
+        class Response:
+            headers = {"Content-Length": str(len(archive))}
+
+            def raise_for_status(self):
+                pass
+
+            def iter_content(self, size):
+                yield archive
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class Session:
+            trust_env = False
+
+            def __init__(self):
+                self.urls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def get(self, url, **kwargs):
+                self.urls.append(url)
+                return Response()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bin_dir = root / "core" / "server" / "engines" / "llama" / "bin"
+            bin_dir.mkdir(parents=True)
+            session = Session()
+            environment = {ENV_BIN: "", ENV_URL: "http://mirror/runtime.zip",
+                           ENV_SHA256: hashlib.sha256(archive).hexdigest()}
+            with patch.dict(os.environ, environment), patch(
+                    "core.model_download.requests.Session", return_value=session):
+                message = download_llama_runtime(root)
+            self.assertIn("运行库已修复", message)
+            self.assertEqual(session.urls, ["http://mirror/runtime.zip"])
+            self.assertTrue((bin_dir / "llama.dll").is_file())
+            self.assertFalse((bin_dir / ".runtime-download.zip.part").exists())
+            session = Session()
+            environment[ENV_SHA256] = "0" * 64
+            with patch.dict(os.environ, environment), patch(
+                    "core.model_download.requests.Session", return_value=session):
+                with self.assertRaises(RuntimeError) as caught:
+                    download_llama_runtime(root)
+            self.assertIn("SHA256", str(caught.exception))
+
+    def test_launcher_runtime_status_reflects_the_report(self):
+        import gui_launcher
+        launcher = gui_launcher.Launcher.__new__(gui_launcher.Launcher)
+        launcher.runtime_status = Mock()
+        launcher.runtime_button = Mock()
+        launcher.vars = {"model_type": SimpleNamespace(
+            get=lambda: gui_launcher.MODEL_CHOICES["paraformer"])}
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(gui_launcher, "ROOT", Path(directory)):
+                launcher._update_runtime_status()
+                self.assertIn("无需该运行库",
+                              launcher.runtime_status.configure.call_args[1]["text"])
+                self.assertEqual(launcher.runtime_button.configure.call_args[1]["state"],
+                                 "disabled")
+                launcher.vars["model_type"] = SimpleNamespace(
+                    get=lambda: gui_launcher.MODEL_CHOICES["qwen_asr"])
+                launcher._update_runtime_status()
+                self.assertIn("未安装",
+                              launcher.runtime_status.configure.call_args[1]["text"])
+                self.assertEqual(launcher.runtime_status.configure.call_args[1]["style"],
+                                 "Danger.TLabel")
+                self.assertEqual(launcher.runtime_button.configure.call_args[1]["state"],
+                                 "normal")
+
+
+class KoreanTokenizerFallbackTests(unittest.TestCase):
+    """精简安装包不含 soynlp/scipy，韩语分词必须自动退回按字切分。"""
+
+    MODULES = ("core.server.engines.qwen_asr_gguf.inference.aligner",
+               "core.server.engines.force_aligner_gguf.inference.aligner")
+
+    def test_korean_tokenizer_falls_back_without_soynlp(self):
+        text = "안녕 하세요"
+        blocked = {"soynlp": None, "soynlp.tokenizer": None}
+        for module_path in self.MODULES:
+            with self.subTest(module=module_path):
+                module = importlib.import_module(module_path)
+                with patch.dict(sys.modules, blocked):
+                    processor = module.AlignerProcessor()
+                    self.assertEqual(processor.tokenize_korean(text), list(text))
+
+    def test_other_languages_do_not_touch_soynlp(self):
+        module = importlib.import_module(self.MODULES[0])
+        with patch.dict(sys.modules, {"soynlp": None, "soynlp.tokenizer": None}):
+            processor = module.AlignerProcessor()
+            self.assertEqual(processor.tokenize("你好 world", "chinese"),
+                             ["你", "好", "world"])
 
 
 if __name__ == "__main__":
