@@ -77,21 +77,22 @@ class APIConfig:
 
     # 请求超时配置（秒）
     # 本地模型第一次可能需要载入，时间稍长
-    # 超过10秒可以认为网络有问题
+    # 云端 API 首字节较慢，2 秒过于激进，统一放宽到 30 秒
     DEFAULT_TIMEOUTS = {
         'ollama': 2.0,       # 本地模型
         'lmstudio': 2.0,     # LM Studio 本地模型
-        'openai': 2.0,       # OpenAI API
-        'deepseek': 2.0,     # DeepSeek API
-        'moonshot': 2.0,     # Moonshot API
-        'zhipu': 2.0,        # 智谱 API
-        'cerebras': 2.0,     # Cerebras API
-        'claude': 2.0,       # Claude API
-        'gemini': 2.0,       # Gemini API
+        'openai': 30.0,
+        'deepseek': 30.0,
+        'moonshot': 30.0,
+        'zhipu': 30.0,
+        'volcengine': 30.0,
+        'cerebras': 30.0,
+        'claude': 30.0,
+        'gemini': 30.0,
     }
 
     # 默认超时（用于未列出的 provider）
-    DEFAULT_TIMEOUT = 2.0
+    DEFAULT_TIMEOUT = 30.0
 
 
 # ==================== Token 估算工具 ====================
