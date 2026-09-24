@@ -216,6 +216,7 @@ class Launcher(tk.Tk):
             "save_audio": tk.BooleanVar(value=True),
             "audio_keep_days": tk.StringVar(value="3"),
             "auto_check_update": tk.BooleanVar(value=True),
+            "voice_phrase": tk.BooleanVar(value=False),
             "close_behavior": tk.StringVar(value=CLOSE_CHOICES["ask"]),
             "asr_api_base_url": tk.StringVar(value="https://api.openai.com/v1"),
             "asr_api_model": tk.StringVar(value="whisper-1"),
@@ -815,6 +816,9 @@ class Launcher(tk.Tk):
         row = self._switch_row(
             form, row, self.vars["auto_check_update"], "自动检查更新",
             "启动后查询 GitHub 发布页；有新版本时在左上角 SAI 旁显示 new 徽标。")
+        row = self._switch_row(
+            form, row, self.vars["voice_phrase"], "语音短语替换",
+            "录音结束后匹配已录入的语音短语并整体替换（在「热词与替换」页录制）。")
         version_row = ttk.Frame(form, style="Card.TFrame")
         version_row.grid(row=row, column=0, columnspan=2, sticky="ew",
                          pady=(4, 0))

@@ -51,8 +51,11 @@ class HotwordEditor(ttk.Frame):
             editor.insert("1.0", content or "")
             editor.edit_reset()
             self.editors[name] = editor
+        from core.desktop_voice_phrases import VoicePhrasePanel
+        self.voice_panel = VoicePhrasePanel(self.tabs)
+        self.tabs.add(self.voice_panel, text="语音短语")
         self._refresh_table()
-        self.tabs.bind("<<NotebookTabChanged>>", lambda _: self._refresh_table())
+        self.tabs.bind("<<NotebookTabChanged>>", self._tab_changed)
         self.tabs.pack(fill="both", expand=True)
 
         actions = ttk.Frame(body, style="Card.TFrame")
@@ -137,6 +140,13 @@ class HotwordEditor(ttk.Frame):
             if pair is not None:
                 self.table.insert("", "end", iid=str(index), values=pair)
 
+    def _tab_changed(self, _=None):
+        self._refresh_table()
+        try:
+            self.voice_panel.refresh()
+        except Exception:
+            pass
+
     def _select_rule(self, _=None):
         selection = self.table.selection()
         if not selection:
@@ -214,7 +224,10 @@ class HotwordEditor(ttk.Frame):
         return self.editors[name].get("1.0", "end-1c")
 
     def _current(self):
-        return ("hot-rule.txt", *self.names)[self.tabs.index(self.tabs.select())]
+        index = self.tabs.index(self.tabs.select())
+        if index >= len(self.names) + 1:
+            return None
+        return ("hot-rule.txt", *self.names)[index]
 
     def _dirty(self, name):
         return self._content(name) != (self.originals[name] or "")
@@ -238,7 +251,10 @@ class HotwordEditor(ttk.Frame):
         return True
 
     def _save_current(self):
-        return self._save(self._current())
+        name = self._current()
+        if name is None:
+            return True
+        return self._save(name)
 
     def _save(self, name):
         content = self._content(name)
@@ -259,6 +275,8 @@ class HotwordEditor(ttk.Frame):
 
     def _reload(self):
         name = self._current()
+        if name is None:
+            return
         if self._dirty(name) and not messagebox.askyesno(
                 "放弃修改", "放弃当前页未保存的修改？", parent=self):
             return
