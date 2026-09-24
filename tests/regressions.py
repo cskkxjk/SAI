@@ -453,7 +453,7 @@ class RegressionTests(unittest.TestCase):
 
         with patch("core.client.clipboard.is_remote_target", return_value=True), \
                 patch("core.client.output.text_output.PynputController") as controller, \
-                patch("core.client.output.text_output.keyboard.write") as write:
+                patch("core.client.output.text_output.key_send.write") as write:
             TextOutput()._type_text("ab")
             controller.assert_called_once()
             self.assertEqual([call.args for call in controller.return_value.type.call_args_list],
@@ -462,7 +462,7 @@ class RegressionTests(unittest.TestCase):
 
         with patch("core.client.clipboard.is_remote_target", return_value=False), \
                 patch("core.client.output.text_output.PynputController") as controller, \
-                patch("core.client.output.text_output.keyboard.write") as write:
+                patch("core.client.output.text_output.key_send.write") as write:
             TextOutput()._type_text("hello")
             write.assert_called_once_with("hello")
             controller.assert_not_called()
