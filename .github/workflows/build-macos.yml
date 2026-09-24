@@ -15,8 +15,16 @@ permissions:
   contents: write
 
 jobs:
-  macos-arm64:
-    runs-on: macos-15
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -44,14 +52,60 @@ jobs:
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
+      - name: 注入 llama.cpp 运行库（${{ matrix.arch }}）
+        run: |
+          set -euo pipefail
+          read -r ARCHIVE SHA256 < <(/usr/bin/python3 -c \
+            "import json,sys; s=json.load(open('core/server/engines/llama/bin/runtime-version.json'))['platforms']['darwin-${{ matrix.arch }}']; print(s['archive'], s['sha256'])")
+          echo "运行库：$ARCHIVE"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/runtime.tar.gz" \
+            "https://github.com/ggml-org/llama.cpp/releases/download/b10621/$ARCHIVE"
+          echo "$SHA256  $RUNNER_TEMP/runtime.tar.gz" | shasum -a 256 -c -
+          mkdir -p core/server/engines/llama/bin
+          tar -xzf "$RUNNER_TEMP/runtime.tar.gz" -C core/server/engines/llama/bin --strip-components=1
+          /usr/bin/python3 - <<'PY'
+          import pathlib
+          import shutil
+
+          keep = ("libllama.", "libggml.", "libggml-base.", "libggml-cpu.",
+                  "libggml-metal.", "libggml-blas.")
+          bin_dir = pathlib.Path("core/server/engines/llama/bin")
+          removed = 0
+          for path in sorted(bin_dir.iterdir()):
+              if path.name.startswith(keep):
+                  continue
+              if path.is_dir():
+                  shutil.rmtree(path)
+              else:
+                  path.unlink()
+              removed += 1
+          print(f"保留 {len(keep)} 类运行库，移除 {removed} 个无关文件")
+          PY
+
+      - name: 校验运行库可加载
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import ctypes
+          import pathlib
+
+          bin_dir = pathlib.Path("core/server/engines/llama/bin")
+          for name in ("libggml-base.dylib", "libggml.dylib", "libggml-cpu.dylib",
+                       "libggml-metal.dylib", "libggml-blas.dylib", "libllama.dylib"):
+              path = bin_dir / name
+              if not path.exists():
+                  raise SystemExit(f"缺少运行库：{path}")
+              ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+          print("运行库加载正常")
+          PY
+
       - name: 打包 SAI.app
         run: ./release_macos.sh "${{ steps.version.outputs.version }}"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: SAI-${{ steps.version.outputs.version }}-macos-arm64
-          path: release/*.zip
+          name: SAI-${{ steps.version.outputs.version }}-macos-${{ matrix.arch }}
+          path: release/*
           if-no-files-found: error
 
       - name: 附加到 Release（若已存在）
@@ -59,5 +113,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "$GITHUB_REF_NAME" release/*.zip --clobber \
+          gh release upload "$GITHUB_REF_NAME" release/* --clobber \
             || echo "Release $GITHUB_REF_NAME 尚不存在，安装包保留在 Artifact 中"
+          exit 0

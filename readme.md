@@ -103,9 +103,11 @@
 
 ## 💻 平台支持
 
-SAI 目前只在 **Windows 10/11 (64 位)** 上构建和测试，安装包与便携目录也只面向 Windows。
+SAI 在 **Windows 10/11 (64 位)** 与 **macOS 12+**（Apple Silicon 与 Intel）上构建和测试。
 
-- **Linux / MacOS**：本分支没有做适配与打包；上游 CapsWriter-Offline 可在这些系统上用源码运行。
+- **Windows**：发布 `SAI-<版本>-Setup.exe`，支持应用内自动更新。
+- **macOS**：发布 `SAI-<版本>-macos-arm64.zip` / `SAI-<版本>-macos-x64.zip` 与对应的 `.dmg` 安装镜像；支持 ONNX 引擎（Paraformer、SenseVoice）与 GGUF 引擎（Fun-ASR、Qwen3-ASR）。应用为 ad-hoc 签名，首次打开需右键「打开」；模型不随包分发，首次使用时按需下载。
+- **Linux**：本分支没有做适配与打包；上游 CapsWriter-Offline 可在这些系统上用源码运行。
 
 
 ## 🎬 快速开始

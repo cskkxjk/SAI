@@ -34,5 +34,33 @@
     "llama.dll",
     "mtmd.dll"
   ],
-  "url": ""
+  "url": "",
+  "platforms": {
+    "darwin-arm64": {
+      "archive": "llama-b10621-bin-macos-arm64.tar.gz",
+      "sha256": "429c8270608600188035e5e92f7d78dffb7900904fe7dd7e6a84f48068cd13cf",
+      "files": [
+        "libggml.dylib",
+        "libggml-base.dylib",
+        "libllama.dylib",
+        "libggml-cpu.dylib",
+        "libggml-metal.dylib",
+        "libggml-blas.dylib"
+      ],
+      "url": ""
+    },
+    "darwin-x64": {
+      "archive": "llama-b10621-bin-macos-x64.tar.gz",
+      "sha256": "33c44e036e0e223f71a29fc74a0ab3e130ca9eadeb032ecc1c7af25985b8b91b",
+      "files": [
+        "libggml.dylib",
+        "libggml-base.dylib",
+        "libllama.dylib",
+        "libggml-cpu.dylib",
+        "libggml-metal.dylib",
+        "libggml-blas.dylib"
+      ],
+      "url": ""
+    }
+  }
 }

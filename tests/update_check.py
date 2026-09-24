@@ -201,6 +201,99 @@ class UpdateAtomTests(unittest.TestCase):
         self.assertFalse(update_checker.should_check(state, now=2000.0 + 60))
 
 
+class MacAssetTests(unittest.TestCase):
+    """macOS 安装包挑选、命名与升级脚本（纯逻辑，不依赖 mac 工具）"""
+
+    def mac_payload(self, version="1.0.3"):
+        payload = release_payload(version)
+        payload["assets"].extend([
+            {"name": f"SAI-{version}-macos-arm64.dmg",
+             "browser_download_url":
+                 f"https://example.test/SAI-{version}-macos-arm64.dmg",
+             "size": 100, "digest": "sha256:" + "ab" * 32},
+            {"name": f"SAI-{version}-macos-x64.zip",
+             "browser_download_url":
+                 f"https://example.test/SAI-{version}-macos-x64.zip",
+             "size": 90},
+        ])
+        return payload
+
+    def test_pick_installer_prefers_matching_arch_dmg(self):
+        assets = self.mac_payload()["assets"]
+        picked = update_checker.pick_installer(
+            assets, platform_name="darwin", machine="arm64")
+        self.assertEqual(picked["name"], "SAI-1.0.3-macos-arm64.dmg")
+        picked = update_checker.pick_installer(
+            assets, platform_name="darwin", machine="x86_64")
+        self.assertEqual(picked["name"], "SAI-1.0.3-macos-x64.zip")
+
+    def test_pick_installer_falls_back_to_any_mac_package(self):
+        assets = [
+            {"name": "SAI-1.0.3-Setup.exe", "browser_download_url": "u"},
+            {"name": "SAI-1.0.3-macos-x64.dmg", "browser_download_url": "u"},
+        ]
+        picked = update_checker.pick_installer(
+            assets, platform_name="darwin", machine="arm64")
+        self.assertEqual(picked["name"], "SAI-1.0.3-macos-x64.dmg")
+        # 只有 Windows 包时，macOS 不应误选 exe
+        self.assertEqual(update_checker.pick_installer(
+            [assets[0]], platform_name="darwin", machine="arm64"), {})
+
+    def test_parse_release_uses_mac_asset(self):
+        info = update_checker.parse_release(
+            self.mac_payload(), "1.0.2", platform_name="darwin", machine="arm64")
+        self.assertEqual(info.installer_name, "SAI-1.0.3-macos-arm64.dmg")
+        self.assertEqual(info.installer_sha256, "ab" * 32)
+        self.assertTrue(info.can_install)
+
+    def test_parse_atom_names_mac_installer(self):
+        info = update_checker.parse_atom(
+            ATOM_XML, "1.0.2", platform_name="darwin", machine="aarch64")
+        self.assertEqual(info.installer_name, "SAI-1.0.3-macos-arm64.dmg")
+        self.assertIn("SAI-1.0.3-macos-arm64.dmg", info.installer_url)
+
+    def test_installer_name_for_matches_release_convention(self):
+        self.assertEqual(update_checker.installer_name_for(
+            "1.0.4", platform_name="win32"), "SAI-1.0.4-Setup.exe")
+        self.assertEqual(update_checker.installer_name_for(
+            "1.0.4", platform_name="darwin", machine="amd64"),
+            "SAI-1.0.4-macos-x64.dmg")
+
+    def test_macos_app_bundle_detects_bundle_path(self):
+        bundle = update_checker.macos_app_bundle(
+            "/Applications/SAI.app/Contents/MacOS/SAI")
+        self.assertIsNotNone(bundle)
+        self.assertEqual(bundle.name, "SAI.app")
+        self.assertIsNone(update_checker.macos_app_bundle("/usr/bin/python3"))
+
+    def test_prepare_macos_update_rejects_unknown_format(self):
+        with tempfile.TemporaryDirectory() as directory:
+            installer = Path(directory) / "SAI-1.0.3-Setup.exe"
+            installer.write_bytes(b"x")
+            with self.assertRaises(RuntimeError):
+                update_checker.prepare_macos_update(
+                    installer, directory=directory)
+
+    def test_create_macos_update_script_replaces_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            new_app = root / "new" / "SAI.app"
+            new_app.mkdir(parents=True)
+            bundle = root / "Applications" / "SAI.app"
+            bundle.mkdir(parents=True)
+            log_file = root / "update.log"
+            script = update_checker.create_macos_update_script(
+                new_app, bundle, log_file, directory=root, pid=12345, delay=1)
+            text = script.read_text(encoding="utf-8")
+            self.assertTrue(text.startswith("#!/bin/sh"))
+            self.assertIn(f'exec >>"{log_file}"', text)
+            self.assertIn(f'OLD="{bundle}"', text)
+            self.assertIn(f'NEW="{new_app}"', text)
+            self.assertIn("kill -0 12345", text)
+            self.assertIn("ditto", text)
+            self.assertIn("xattr -dr com.apple.quarantine", text)
+
+
 class UpdateCheckerTests(unittest.TestCase):
     def test_parse_version_handles_prefix_and_suffix(self):
         self.assertEqual(update_checker.parse_version("v1.0.2"), (1, 0, 2))
@@ -332,6 +425,28 @@ class UpdateBadgeTests(unittest.TestCase):
         launcher.update_badge.pack.assert_not_called()
         launcher._show_update_badge(False)
         launcher.update_badge.pack_forget.assert_called_once()
+
+
+class ReleaseNotesTests(unittest.TestCase):
+    def test_parse_release_notes_styles(self):
+        from gui_launcher import parse_release_notes
+        lines = parse_release_notes(
+            "### 标题\n- **加粗** 与 `代码`\n\n普通 [链接](https://example.com/a)\n")
+        self.assertEqual(lines[0], ("heading", [("标题", "")]))
+        self.assertEqual(lines[1][0], "bullet")
+        self.assertIn(("加粗", "bold"), lines[1][1])
+        self.assertIn(("代码", "code"), lines[1][1])
+        self.assertEqual(lines[2], ("blank", []))
+        self.assertEqual(lines[3][0], "text")
+        self.assertIn(("链接", "link:https://example.com/a"), lines[3][1])
+
+    def test_parse_release_notes_keeps_plain_text(self):
+        from gui_launcher import parse_release_notes
+        self.assertEqual(parse_release_notes(""), [])
+        self.assertEqual(parse_release_notes("1.0.4-rc1 版本说明"),
+                         [("text", [("1.0.4-rc1 版本说明", "")])])
+        numbered = parse_release_notes("1. 第一步")
+        self.assertEqual(numbered, [("bullet", [("第一步", "")])])
 
 
 if __name__ == "__main__":

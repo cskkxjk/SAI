@@ -2,6 +2,8 @@
 import hashlib
 import re
 import shutil
+import sys
+import tarfile
 import threading
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -183,23 +185,48 @@ def download_model(name, root, progress=lambda *args: None, cancel=None, quantiz
         progress("下载并校验完成", total, total)
 
 
-def install_llama_runtime(archive, bin_dir, cancel=None):
-    """把运行库压缩包里的 DLL 解压到 bin_dir（扁平覆盖），返回写入的文件数"""
+def install_llama_runtime(archive, bin_dir, cancel=None, suffix=None):
+    """把运行库压缩包里的动态库解压到 bin_dir（扁平覆盖），返回写入的文件数。
+
+    Windows 官方包是 zip（只取 DLL）；macOS 官方包是 tar.gz（只取 dylib，
+    保留符号链接，跳过命令行工具与文档）。
+    """
     cancel = cancel or threading.Event()
     bin_dir = Path(bin_dir)
     bin_dir.mkdir(parents=True, exist_ok=True)
+    if suffix is None:
+        suffix = ".dylib" if sys.platform == "darwin" else ".dll"
+    archive = Path(archive)
     count = 0
-    with zipfile.ZipFile(archive) as bundle:
-        for entry in bundle.infolist():
-            name = PurePosixPath(entry.filename.replace("\\", "/")).name
-            if entry.is_dir() or not name.lower().endswith(".dll"):
-                continue
-            _check_cancel(cancel)
-            with bundle.open(entry) as source, (bin_dir / name).open("wb") as target:
-                shutil.copyfileobj(source, target, 1024 * 1024)
-            count += 1
+    if archive.name.lower().endswith((".tar.gz", ".tgz")):
+        with tarfile.open(archive, "r:gz") as bundle:
+            members = []
+            for entry in bundle.getmembers():
+                name = PurePosixPath(entry.name.replace("\\", "/")).name
+                if entry.isdir() or not name.lower().endswith(suffix):
+                    continue
+                entry.name = name
+                members.append(entry)
+            for entry in members:
+                _check_cancel(cancel)
+                try:
+                    bundle.extract(entry, path=bin_dir, filter="data",
+                                   set_attrs=False)
+                except (tarfile.TarError, OSError) as error:
+                    raise RuntimeError(f"运行库解压失败：{error}") from error
+                count += 1
+    else:
+        with zipfile.ZipFile(archive) as bundle:
+            for entry in bundle.infolist():
+                name = PurePosixPath(entry.filename.replace("\\", "/")).name
+                if entry.is_dir() or not name.lower().endswith(suffix):
+                    continue
+                _check_cancel(cancel)
+                with bundle.open(entry) as source, (bin_dir / name).open("wb") as target:
+                    shutil.copyfileobj(source, target, 1024 * 1024)
+                count += 1
     if not count:
-        raise RuntimeError("运行库压缩包里没有 DLL 文件")
+        raise RuntimeError("运行库压缩包里没有动态库文件")
     return count
 
 
@@ -207,17 +234,24 @@ def _manual_runtime_hint(url, bin_dir, error):
     from core.tools import llama_runtime
 
     return (f"运行库下载失败：{error}\n"
-            f"可手动下载 {url} 并解压到 {bin_dir}，"
+            f"可手动下载 {url} 并解压其中的动态库到 {bin_dir}，"
             f"或设置环境变量 {llama_runtime.ENV_URL} 指向镜像地址。")
 
 
-def download_llama_runtime(root, progress=lambda *args: None, cancel=None):
-    """下载并安装 llama.cpp 运行库，返回可展示的完成消息"""
+def download_llama_runtime(root, progress=lambda *args: None, cancel=None,
+                           base_dir=None):
+    """下载并安装 llama.cpp 运行库，返回可展示的完成消息。
+
+    base_dir 为 None 时用标准引擎目录（<root>/core/server/engines/llama）；
+    macOS 装机版由调用方传入可写的用户数据目录，避免写入 .app 破坏签名。
+    """
     from core.tools import llama_runtime
 
     cancel = cancel or threading.Event()
     root = Path(root).resolve()
-    base_dir = root / "core" / "server" / "engines" / "llama"
+    if base_dir is None:
+        base_dir = root / "core" / "server" / "engines" / "llama"
+    base_dir = Path(base_dir)
     bin_dir = base_dir / "bin"
     if not llama_runtime.runtime_platform_supported():
         raise RuntimeError("当前系统暂不支持自动下载运行库，请手动安装 llama.cpp")
@@ -230,7 +264,7 @@ def download_llama_runtime(root, progress=lambda *args: None, cancel=None):
     base_dir.mkdir(parents=True, exist_ok=True)
     progress("正在下载 llama.cpp 运行库", 0, 0)
     _check_cancel(cancel)
-    temporary = base_dir / ".runtime-download.zip.part"
+    temporary = base_dir / ".runtime-download.part"
     try:
         with requests.Session() as session:
             # GitHub 在部分网络环境下需要走系统代理

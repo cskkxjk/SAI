@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import tarfile
 import time
 import zipfile
 from pathlib import Path
@@ -962,6 +963,46 @@ class LlamaRuntimeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 install_llama_runtime(root / "empty.zip", bin_dir)
 
+    def test_install_runtime_unpacks_macos_tarball_flat(self):
+        from core.model_download import install_llama_runtime
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "runtime.tar.gz"
+            with tarfile.open(archive, "w:gz") as bundle:
+                for name, content in (
+                        ("llama-b10621/libllama.0.dylib", b"\xcf\xfa\xed\xfe"),
+                        ("llama-b10621/libggml.0.dylib", b"\xcf\xfa\xed\xfe"),
+                        ("llama-b10621/libggml-cpu.dylib", b"\xcf\xfa\xed\xfe"),
+                        ("llama-b10621/llama-cli", b"#!/bin/sh"),
+                        ("llama-b10621/README.md", b"hi")):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(content)
+                    bundle.addfile(info, io.BytesIO(content))
+                link = tarfile.TarInfo("llama-b10621/libggml.dylib")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "libggml.0.dylib"
+                bundle.addfile(link)
+            bin_dir = root / "bin"
+            self.assertEqual(
+                install_llama_runtime(archive, bin_dir, suffix=".dylib"), 4)
+            self.assertTrue((bin_dir / "libllama.0.dylib").is_file())
+            self.assertTrue((bin_dir / "libggml.0.dylib").is_file())
+            self.assertTrue((bin_dir / "libggml-cpu.dylib").is_file())
+            link_path = bin_dir / "libggml.dylib"
+            if sys.platform == "win32":
+                self.assertTrue(link_path.is_file())
+            else:
+                self.assertTrue(link_path.is_symlink())
+            self.assertFalse((bin_dir / "llama-cli").exists())
+            self.assertFalse((bin_dir / "README.md").exists())
+            with tarfile.open(root / "empty.tar.gz", "w:gz") as bundle:
+                info = tarfile.TarInfo("README.md")
+                info.size = 2
+                bundle.addfile(info, io.BytesIO(b"hi"))
+            with self.assertRaises(RuntimeError):
+                install_llama_runtime(root / "empty.tar.gz", bin_dir,
+                                      suffix=".dylib")
+
     def test_download_runtime_verifies_and_installs_the_archive(self):
         from core.model_download import download_llama_runtime
         from core.tools.llama_runtime import ENV_BIN, ENV_SHA256, ENV_URL
@@ -1016,7 +1057,7 @@ class LlamaRuntimeTests(unittest.TestCase):
             self.assertIn("运行库已修复", message)
             self.assertEqual(session.urls, ["http://mirror/runtime.zip"])
             self.assertTrue((bin_dir / "llama.dll").is_file())
-            self.assertFalse((bin_dir / ".runtime-download.zip.part").exists())
+            self.assertFalse((bin_dir / ".runtime-download.part").exists())
             session = Session()
             environment[ENV_SHA256] = "0" * 64
             with patch.dict(os.environ, environment), patch(

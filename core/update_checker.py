@@ -16,7 +16,11 @@ import hashlib
 import html
 import json
 import os
+import platform
 import re
+import shutil
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -117,9 +121,37 @@ class ReleaseInfo:
         return bool(self.installer_name and self.installer_url)
 
 
-def pick_installer(assets):
-    """挑选安装包资产，优先 SAI-*-Setup.exe"""
+def _machine_arch(machine=None):
+    """把 machine 名称归一化为 arm64 / x64"""
+    machine = str(machine or platform.machine()).lower()
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    if machine in ("x86_64", "amd64"):
+        return "x64"
+    return machine
+
+
+def pick_installer(assets, platform_name=None, machine=None):
+    """挑选当前平台的安装包资产。
+
+    Windows 优先 SAI-*-Setup.exe；macOS 优先对应架构的 dmg，
+    依次回退到对应架构 zip、任意 dmg、任意 zip。
+    """
+    platform_name = platform_name or sys.platform
     assets = [asset for asset in assets if isinstance(asset, dict)]
+    if platform_name == "darwin":
+        arch = _machine_arch(machine)
+        mac_assets = [asset for asset in assets
+                      if "macos" in str(asset.get("name", "")).lower()]
+        for suffix in (f"-macos-{arch}.dmg", f"-macos-{arch}.zip"):
+            for asset in mac_assets:
+                if str(asset.get("name", "")).lower().endswith(suffix):
+                    return asset
+        for suffix in (".dmg", ".zip"):
+            for asset in mac_assets:
+                if str(asset.get("name", "")).lower().endswith(suffix):
+                    return asset
+        return {}
     for asset in assets:
         if str(asset.get("name", "")).lower().endswith("-setup.exe"):
             return asset
@@ -129,7 +161,7 @@ def pick_installer(assets):
     return {}
 
 
-def parse_release(data, current_version):
+def parse_release(data, current_version, platform_name=None, machine=None):
     """把 GitHub Release JSON 转成 ReleaseInfo；无更新或不是正式版返回 None"""
     if not isinstance(data, dict) or data.get("draft") or data.get("prerelease"):
         return None
@@ -137,7 +169,8 @@ def parse_release(data, current_version):
     version = normalize_version(tag or data.get("name") or "")
     if not version or not is_newer(version, current_version):
         return None
-    installer = pick_installer(data.get("assets") or [])
+    installer = pick_installer(data.get("assets") or [],
+                               platform_name=platform_name, machine=machine)
     digest = str(installer.get("digest") or "").lower()
     if digest.startswith("sha256:"):
         digest = digest[len("sha256:"):]
@@ -155,8 +188,11 @@ def parse_release(data, current_version):
     )
 
 
-def installer_name_for(version):
+def installer_name_for(version, platform_name=None, machine=None):
     """按发布约定推导安装包文件名"""
+    platform_name = platform_name or sys.platform
+    if platform_name == "darwin":
+        return f"SAI-{version}-macos-{_machine_arch(machine)}.dmg"
     return f"SAI-{version}-Setup.exe"
 
 
@@ -182,10 +218,10 @@ def html_to_text(source):
     return text.strip()
 
 
-def parse_atom(xml_text, current_version):
+def parse_atom(xml_text, current_version, platform_name=None, machine=None):
     """解析 releases.atom，取最新一条正式版；无更新返回 None。
 
-    Atom 不提供资产大小与摘要，按 SAI-<版本>-Setup.exe 的发布约定推导下载地址，
+    Atom 不提供资产大小与摘要，按 SAI-<版本>-<平台包名> 的发布约定推导下载地址，
     下载时跳过 SHA256 校验。
     """
     try:
@@ -207,7 +243,7 @@ def parse_atom(xml_text, current_version):
         if not version or "-" in version or not is_newer(version, current_version):
             continue
         name = str(entry.findtext(f"{ATOM_NS}title") or tag).strip()
-        installer = installer_name_for(version)
+        installer = installer_name_for(version, platform_name, machine)
         return ReleaseInfo(
             version=version,
             tag=tag,
@@ -222,11 +258,13 @@ def parse_atom(xml_text, current_version):
 
 
 def fetch_latest_release(current_version, session=None, api_url=None,
-                         timeout=REQUEST_TIMEOUT, atom_url=None):
+                         timeout=REQUEST_TIMEOUT, atom_url=None,
+                         platform_name=None, machine=None):
     """查询最新正式版；没有更新返回 None。
 
     优先 GitHub API（SAI_UPDATE_API 可覆盖），被限流（403）或网络异常时
     回退 releases.atom（SAI_UPDATE_ATOM 可覆盖），两者都失败才报错。
+    platform_name / machine 决定挑选哪个平台的安装包（默认当前系统）。
     """
     session = session or requests.Session()
     # GitHub 在部分网络环境下需要走系统代理
@@ -239,7 +277,8 @@ def fetch_latest_release(current_version, session=None, api_url=None,
             "User-Agent": USER_AGENT,
         })
         response.raise_for_status()
-        return parse_release(response.json(), current_version)
+        return parse_release(response.json(), current_version,
+                             platform_name=platform_name, machine=machine)
     except (requests.RequestException, ValueError, TypeError) as error:
         api_error = error
     feed = atom_url or os.environ.get("SAI_UPDATE_ATOM") or ATOM_LATEST
@@ -249,7 +288,8 @@ def fetch_latest_release(current_version, session=None, api_url=None,
             "User-Agent": USER_AGENT,
         })
         response.raise_for_status()
-        return parse_atom(response.text, current_version)
+        return parse_atom(response.text, current_version,
+                          platform_name=platform_name, machine=machine)
     except (requests.RequestException, ValueError, TypeError) as error:
         raise RuntimeError(
             f"GitHub API 失败（{api_error}），releases.atom 也失败（{error}）"
@@ -312,7 +352,7 @@ def is_skipped(state, version):
 
 def installer_path(release, directory=None):
     directory = Path(directory) if directory is not None else UPDATES_DIR
-    name = release.installer_name or f"SAI-{release.version}-Setup.exe"
+    name = release.installer_name or installer_name_for(release.version)
     return directory / name
 
 
@@ -396,4 +436,110 @@ def create_install_script(installer, app_exe, log_file=None, directory=None,
     encoding = "mbcs" if os.name == "nt" else "utf-8"
     script.write_text("\r\n".join(lines) + "\r\n", encoding=encoding,
                       errors="replace")
+    return script
+
+
+def macos_app_bundle(executable=None):
+    """从可执行文件路径推导 .app 包路径；不在 .app 内时返回 None"""
+    executable = Path(executable or sys.executable).resolve()
+    for parent in executable.parents:
+        if parent.name.endswith(".app"):
+            return parent
+    return None
+
+
+def prepare_macos_update(installer, directory=None):
+    """解压升级包里的 SAI.app，返回解压后的应用路径。
+
+    zip 包用 ditto 解压；dmg 包先挂载再拷贝，最后自动卸载。
+    """
+    installer = Path(installer).resolve()
+    if not installer.is_file():
+        raise RuntimeError(f"升级包不存在：{installer}")
+    directory = Path(directory) if directory is not None else UPDATES_DIR
+    target_dir = directory / f"extract-{installer.stem}"
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    suffix = installer.suffix.lower()
+    if suffix == ".zip":
+        subprocess.run(["ditto", "-x", "-k", str(installer), str(target_dir)],
+                       check=True)
+    elif suffix == ".dmg":
+        mount = target_dir / "mount"
+        mount.mkdir()
+        subprocess.run(["hdiutil", "attach", str(installer), "-nobrowse",
+                        "-mountpoint", str(mount)], check=True)
+        try:
+            bundles = sorted(mount.glob("*.app"))
+            if not bundles:
+                raise RuntimeError("安装包里没有找到 SAI.app")
+            subprocess.run(
+                ["ditto", str(bundles[0]), str(target_dir / bundles[0].name)],
+                check=True)
+        finally:
+            subprocess.run(["hdiutil", "detach", str(mount), "-quiet"],
+                           check=False)
+    else:
+        raise RuntimeError(f"不支持的升级包格式：{installer.name}")
+    app = target_dir / "SAI.app"
+    if not app.is_dir():
+        raise RuntimeError("升级包里没有找到 SAI.app")
+    return app
+
+
+def create_macos_update_script(new_app, app_bundle, log_file=None,
+                               directory=None, pid=None, delay=3):
+    """生成 macOS 升级脚本，返回脚本路径。
+
+    脚本等待 SAI 退出后用 ditto 原地替换 .app；替换失败自动回滚，
+    完成后重新打开新版本。
+    """
+    new_app = Path(new_app).resolve()
+    app_bundle = Path(app_bundle).resolve()
+    if not new_app.is_dir():
+        raise RuntimeError(f"新版本应用不存在：{new_app}")
+    if not app_bundle.is_dir() or not app_bundle.name.endswith(".app"):
+        raise RuntimeError(f"当前应用包路径无效：{app_bundle}")
+    directory = Path(directory) if directory is not None else UPDATES_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    script = directory / "install-update.sh"
+    lines = ["#!/bin/sh"]
+    if log_file is not None:
+        lines.append(f'exec >>"{Path(log_file).resolve()}" 2>&1')
+    lines.append('echo "== $(date) 开始更新 =="')
+    wait_lines = []
+    if pid:
+        wait_lines = [
+            "i=0",
+            'while [ "$i" -lt 120 ]; do',
+            f"  if ! kill -0 {int(pid)} 2>/dev/null; then break; fi",
+            "  sleep 1",
+            "  i=$((i + 1))",
+            "done",
+        ]
+    wait_lines.append(f"sleep {max(1, int(delay))}")
+    lines += wait_lines + [
+        f'OLD="{app_bundle}"',
+        f'NEW="{new_app}"',
+        'BACKUP="${OLD}.old"',
+        'rm -rf "$BACKUP"',
+        'if ! mv "$OLD" "$BACKUP"; then',
+        '  echo "无法替换旧版本，可能没有写入权限：$OLD"',
+        '  open -R "$NEW"',
+        "  exit 1",
+        "fi",
+        'if ! ditto "$NEW" "$OLD"; then',
+        "  echo \"复制新版本失败，正在回滚\"",
+        '  rm -rf "$OLD"',
+        '  mv "$BACKUP" "$OLD"',
+        '  open "$OLD"',
+        "  exit 1",
+        "fi",
+        'rm -rf "$BACKUP"',
+        'xattr -dr com.apple.quarantine "$OLD" >/dev/null 2>&1',
+        'open "$OLD"',
+        'rm -f "$0"',
+    ]
+    script.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return script

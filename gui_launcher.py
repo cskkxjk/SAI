@@ -7,6 +7,7 @@ import json
 import math
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -23,7 +24,8 @@ from core.audio_devices import physical_input_devices, resolve_input_device
 from core.runtime_paths import (APP_DIR, DATA_DIR, default_data_directory,
                                 initialize_user_data, write_pointer)
 from core.tools.data_migration import move_data, validate_target
-from core.tools.llama_runtime import verify_llama_runtime
+from core.tools.llama_runtime import (default_runtime_base, download_size_hint,
+                                      verify_llama_runtime)
 from core.model_download import (download_llama_runtime, download_model,
                                  DownloadCancelled, missing_files, model_files)
 from core.desktop_widgets import (
@@ -115,6 +117,49 @@ CLOSE_CHOICES = {
 CLOSE_LABELS = {label: key for key, label in CLOSE_CHOICES.items()}
 
 
+_NOTES_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+_NOTES_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
+_NOTES_INLINE = re.compile(
+    r"\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?://[^\s)]+)\)")
+
+
+def _notes_inline_segments(text):
+    segments = []
+    position = 0
+    for match in _NOTES_INLINE.finditer(text):
+        if match.start() > position:
+            segments.append((text[position:match.start()], ""))
+        if match.group(1) is not None:
+            segments.append((match.group(1), "bold"))
+        elif match.group(2) is not None:
+            segments.append((match.group(2), "code"))
+        else:
+            segments.append((match.group(3), "link:" + match.group(4)))
+        position = match.end()
+    if position < len(text):
+        segments.append((text[position:], ""))
+    return segments
+
+
+def parse_release_notes(notes):
+    """把更新说明的简单 Markdown 拆成 [(行样式, [(文本, 样式)])]，供 tk.Text 渲染。"""
+    lines = []
+    for raw in (notes or "").splitlines():
+        heading = _NOTES_HEADING.match(raw)
+        if heading:
+            lines.append(("heading", _notes_inline_segments(heading.group(2))))
+            continue
+        bullet = _NOTES_BULLET.match(raw)
+        if bullet:
+            lines.append(("bullet", _notes_inline_segments(bullet.group(1))))
+            continue
+        if not raw.strip():
+            lines.append(("blank", []))
+            continue
+        lines.append(("text", _notes_inline_segments(raw)))
+    return lines
+
+
 class Launcher(tk.Tk):
     def __init__(self):
         initialize_user_data()
@@ -170,7 +215,7 @@ class Launcher(tk.Tk):
             "keep_microphone_open": tk.BooleanVar(value=False),
             "save_audio": tk.BooleanVar(value=True),
             "audio_keep_days": tk.StringVar(value="3"),
-            "auto_check_update": tk.BooleanVar(value=(sys.platform != "darwin")),
+            "auto_check_update": tk.BooleanVar(value=True),
             "close_behavior": tk.StringVar(value=CLOSE_CHOICES["ask"]),
             "asr_api_base_url": tk.StringVar(value="https://api.openai.com/v1"),
             "asr_api_model": tk.StringVar(value="whisper-1"),
@@ -1018,6 +1063,8 @@ class Launcher(tk.Tk):
 
     @staticmethod
     def _runtime_base_dir():
+        if sys.platform == "darwin":
+            return default_runtime_base()
         return ROOT / "core" / "server" / "engines" / "llama"
 
     def _runtime_report(self):
@@ -1085,14 +1132,15 @@ class Launcher(tk.Tk):
         if confirm and not messagebox.askokcancel(
                 "修复推理运行库",
                 "检测到以下问题：\n" + "\n".join(report.problems) +
-                "\n\n将从官网下载 llama.cpp 运行库（约 33 MB）并校验后覆盖安装。\n"
+                f"\n\n将从官网下载 llama.cpp 运行库（{download_size_hint()}）并校验后覆盖安装。\n"
                 "下载会走系统代理设置；如无法访问 GitHub，也可自行下载后解压到：\n"
                 f"{self._runtime_base_dir() / 'bin'}\n\n是否继续？",
                 parent=self):
             return
 
         def work(progress, cancel):
-            return download_llama_runtime(ROOT, progress, cancel)
+            return download_llama_runtime(ROOT, progress, cancel,
+                                          base_dir=self._runtime_base_dir())
 
         self._run_download(work, "正在连接 GitHub...",
                            fail_prefix="运行库修复失败", error_title="运行库修复失败")
@@ -1178,9 +1226,6 @@ class Launcher(tk.Tk):
 
     def _auto_check_update(self):
         """启动后的自动检查；受“自动检查更新”开关和 24 小时间隔限制"""
-        # macOS 分支的更新包与上游发布说明均面向 Windows，自动检查无意义
-        if sys.platform == "darwin":
-            return
         if not self.vars["auto_check_update"].get():
             return
         if not update_checker.should_check(self.update_state):
@@ -1297,21 +1342,21 @@ class Launcher(tk.Tk):
                        and (APP_DIR / "installed.flag").is_file())
         cancel_button = PillButton(
             buttons, "取消下载", command=self.update_cancel.set, kind="danger",
-            width=96, background=PAGE_BG)
+            background=PAGE_BG)
         PillButton(buttons, "稍后", command=dialog.destroy, kind="secondary",
-                   width=72, background=PAGE_BG).pack(side="right")
+                   background=PAGE_BG).pack(side="right")
         PillButton(buttons, "跳过此版本",
                    command=lambda: self._skip_update(dialog), kind="ghost",
-                   width=104, background=PAGE_BG).pack(side="right", padx=(0, 10))
+                   background=PAGE_BG).pack(side="right", padx=(0, 10))
         PillButton(buttons, "打开发布页",
                    command=lambda: webbrowser.open(info.page_url),
-                   kind="secondary", width=104,
-                   background=PAGE_BG).pack(side="right", padx=(0, 10))
+                   kind="secondary", background=PAGE_BG).pack(
+                       side="right", padx=(0, 10))
         action_button = PillButton(
             buttons, "下载并安装" if installable else "下载安装包",
             command=lambda: self._download_update(
                 dialog, progress, status_var, action_button, cancel_button),
-            kind="primary", width=112, background=PAGE_BG)
+            kind="primary", background=PAGE_BG)
         action_button.pack(side="right", padx=(0, 10))
         cancel_button.pack(side="right", padx=(0, 10))
         cancel_button.configure(state="disabled")
@@ -1324,23 +1369,51 @@ class Launcher(tk.Tk):
 
     @staticmethod
     def _release_notes_widget(parent, notes):
-        """优先用 tkhtmlview 渲染 Markdown，失败时退回纯文本"""
-        text = notes or "（该版本没有填写更新说明）"
-        try:
-            import markdown as markdown_lib
-            from tkhtmlview import HTMLScrolledText
-            widget = HTMLScrolledText(
-                parent, html=markdown_lib.markdown(text), background=CARD_BG,
-                padx=10, pady=8, relief="flat", highlightthickness=1,
-                highlightbackground=BORDER, font=ui_font(9))
-        except Exception:
-            widget = tk.Text(
-                parent, wrap="word", background=CARD_BG, foreground=TEXT,
-                relief="flat", highlightthickness=1, highlightbackground=BORDER,
-                padx=10, pady=8, font=ui_font(9))
-            widget.insert("1.0", text)
-            widget.configure(state="disabled")
-        return widget
+        """用应用字体渲染更新说明（标题/列表/加粗/行内代码/链接）。"""
+        container = tk.Frame(parent, background=CARD_BG, highlightthickness=1,
+                             highlightbackground=BORDER)
+        widget = tk.Text(container, wrap="word", cursor="arrow",
+                         background=CARD_BG, foreground=TEXT, relief="flat",
+                         highlightthickness=0, padx=10, pady=8,
+                         font=ui_font(9), state="normal")
+        scrollbar = ttk.Scrollbar(container, orient="vertical",
+                                  command=widget.yview)
+        widget.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        widget.pack(side="left", fill="both", expand=True)
+        widget.tag_configure("heading", font=ui_font(10, "bold"),
+                             spacing1=8, spacing3=4)
+        widget.tag_configure("bold", font=ui_font(9, "bold"))
+        widget.tag_configure("code", background="#F1F1F3")
+        widget.tag_configure("bullet", lmargin1=16, lmargin2=30)
+        for kind, segments in parse_release_notes(
+                notes or "（该版本没有填写更新说明）"):
+            tags = ("heading",) if kind == "heading" else ()
+            if kind == "bullet":
+                tags = ("bullet",)
+                widget.insert("end", "•  ", tags)
+            for text, style in segments:
+                if style.startswith("link:"):
+                    tag = "link_" + uuid.uuid4().hex[:8]
+                    widget.tag_configure(tag, foreground=PRIMARY,
+                                         underline=True)
+                    widget.tag_bind(
+                        tag, "<Button-1>",
+                        lambda _event, url=style[5:]: webbrowser.open(url))
+                    widget.tag_bind(
+                        tag, "<Enter>",
+                        lambda _event: widget.configure(cursor="hand2"))
+                    widget.tag_bind(
+                        tag, "<Leave>",
+                        lambda _event: widget.configure(cursor="arrow"))
+                    widget.insert("end", text, (tag,))
+                elif style in ("bold", "code"):
+                    widget.insert("end", text, tags + (style,))
+                else:
+                    widget.insert("end", text, tags)
+            widget.insert("end", "\n", tags if kind == "heading" else ())
+        widget.configure(state="disabled")
+        return container
 
     def _skip_update(self, dialog):
         info = self.update_info
@@ -1441,6 +1514,16 @@ class Launcher(tk.Tk):
             else:
                 subprocess.Popen(["xdg-open", str(Path(installer).parent)])
             return
+            if sys.platform == "darwin":
+                if not messagebox.askokcancel(
+                        "安装更新",
+                        f"将退出 SAI，自动替换为 v{info.version} 并重新打开。\n\n"
+                        "如果 SAI 安装在需要管理员权限的位置，"
+                        "会自动打开升级包，把 SAI 拖入“应用程序”覆盖即可。\n\n"
+                        "是否继续？", parent=dialog):
+                    return
+                self._install_update(installer)
+                return
         if not messagebox.askokcancel(
                 "安装更新",
                 f"将关闭 SAI 并静默安装 v{info.version}，"
@@ -1452,6 +1535,9 @@ class Launcher(tk.Tk):
         """退出 SAI，交给批处理等待安装完成后重启新版本"""
         log_file = CONFIG.parent / "logs" / "update-install.log"
         log_file.parent.mkdir(exist_ok=True)
+        if sys.platform == "darwin":
+            self._install_update_macos(installer, log_file)
+            return
         try:
             script = update_checker.create_install_script(
                 installer, sys.executable, log_file)
@@ -1470,6 +1556,39 @@ class Launcher(tk.Tk):
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.destroy()
+
+    def _install_update_macos(self, installer, log_file):
+        """macOS：解压升级包，用辅助脚本等待退出后原地替换 .app 并重启"""
+        bundle = update_checker.macos_app_bundle(sys.executable)
+        if bundle is None:
+            messagebox.showerror(
+                "无法安装更新",
+                f"当前不是从 SAI.app 运行，无法自动替换。\n"
+                f"请手动安装：\n{installer}", parent=self)
+            subprocess.Popen(["open", "-R", str(installer)])
+            return
+        try:
+            new_app = update_checker.prepare_macos_update(installer)
+            script = update_checker.create_macos_update_script(
+                new_app, bundle, log_file, pid=os.getpid())
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            messagebox.showerror(
+                "无法安装更新",
+                f"{exc}\n\n已打开下载目录，可手动安装。", parent=self)
+            subprocess.Popen(["open", str(Path(installer).parent)])
+            return
+        self.update_cancel.set()
+        if self.download_thread is not None:
+            self.download_cancel.set()
+        self._save(quiet=True)
+        self._stop_processes()
+        if self.tray_icon:
+            self.tray_icon.stop()
+        subprocess.Popen(
+            ["/bin/sh", str(script)], cwd=str(script.parent),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True)
         self.destroy()
 
     def _refresh_audio_devices(self, refresh=False):
