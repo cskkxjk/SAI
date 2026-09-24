@@ -1,33 +1,13 @@
 {
-  "model_type": "paraformer",
-  "qwen_quantization": "q5_k",
+  "model_type": "fun_asr_nano",
   "onnx_provider": "AUTO",
   "llm_use_gpu": true,
   "language": "auto",
   "threshold": 0.3,
   "context": "",
   "paste": false,
-  "audio_device": null,
-  "keep_microphone_open": false,
   "save_audio": true,
   "audio_keep_days": 3,
-  "auto_check_update": false,
-  "close_behavior": "每次询问",
-  "asr_api_base_url": "https://api.openai.com/v1",
-  "asr_api_model": "whisper-1",
-  "asr_api_key": "",
-  "asr_api_timeout": "60",
-  "asr_api_allow_http": false,
-  "child_tray": false,
-  "shortcuts": [
-    {
-      "key": "alt_r",
-      "type": "keyboard",
-      "suppress": true,
-      "hold_mode": true,
-      "enabled": true
-    }
-  ],
-  "close_action": "ask",
-  "close_action_remembered": false
+  "auto_check_update": true,
+  "child_tray": false
 }
