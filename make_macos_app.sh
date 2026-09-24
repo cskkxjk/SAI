@@ -60,6 +60,22 @@ if [ -d "$ROOT/dist/SAI" ]; then
   echo "已整理 onedir：$ROOT/dist/SAI"
 fi
 
+# ---- 二进制瘦身 ----
+# 去掉动态库的调试信息与局部符号（不影响运行；必须在签名前做，否则签名失效）。
+strip_bundle() {
+  local app="$1"
+  local before after count
+  before=$(du -sk "$app" | awk '{print $1}')
+  count=$(find "$app/Contents" -type f \( -name '*.dylib' -o -name '*.so' \) | wc -l | tr -d ' ')
+  find "$app/Contents" -type f \( -name '*.dylib' -o -name '*.so' \) -print0 \
+    | xargs -0 -n 20 strip -S -x 2>/dev/null || true
+  for f in "$app"/Contents/MacOS/SAI "$app"/Contents/Frameworks/Python.framework/Versions/*/Python; do
+    [ -f "$f" ] && strip -S -x "$f" 2>/dev/null || true
+  done
+  after=$(du -sk "$app" | awk '{print $1}')
+  echo "strip：处理 $count 个动态库，${before}K -> ${after}K"
+}
+
 # ---- .app ----
 APP="$ROOT/dist/SAI.app"
 if [ -d "$APP" ]; then
@@ -67,6 +83,7 @@ if [ -d "$APP" ]; then
   copy_payload "$MACOS"
   # 模型不放进 app 包（macOS 上模型位于用户数据目录，首次运行在界面下载），
   # 这样分发的是瘦身包，且不会因写入 .app 破坏代码签名。
+  strip_bundle "$APP"
   codesign --force --deep --sign - "$APP"
   echo "已整理并签名：$APP"
 fi

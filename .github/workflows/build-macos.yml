@@ -104,6 +104,29 @@ jobs:
       - name: 打包 SAI.app
         run: ./release_macos.sh "${{ steps.version.outputs.version }}"
 
+      - name: 校验 strip 后关键动态库可加载
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import ctypes
+          import pathlib
+
+          app = pathlib.Path("dist/SAI.app/Contents")
+          wanted = ("libllvmlite.dylib", "libonnxruntime", "libsherpa-onnx-c-api.dylib",
+                    "libggml", "libllama")
+          loaded = []
+          for path in sorted(app.rglob("*")):
+              if not path.is_file():
+                  continue
+              if not (path.name.endswith(".dylib") or path.name.endswith(".so")):
+                  continue
+              if any(w in path.name for w in wanted):
+                  ctypes.CDLL(str(path.resolve()))
+                  loaded.append(path.name)
+          if len(loaded) < 4:
+              raise SystemExit(f"待校验动态库过少：{loaded}")
+          print(f"strip 后关键动态库加载正常：{len(loaded)} 个：{', '.join(loaded)}")
+          PY
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
