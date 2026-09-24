@@ -1,0 +1,112 @@
+name: Build Windows Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64-setup:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 解析版本号
+        id: version
+        shell: pwsh
+        run: |
+          $match = Select-String -Path config_server.py -Pattern "^__version__ = '([^']+)'" | Select-Object -First 1
+          if (-not $match) { throw "无法从 config_server.py 读取 __version__" }
+          $version = $match.Matches.Groups[1].Value
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+            if ($tagVersion -ne $version) {
+              throw "tag $tagVersion 与 config_server.py 的 $version 不一致；请先更新版本号（installer/README.md 有清单）再打 tag"
+            }
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: 准备 llama.cpp 运行库（下载 + SHA256 校验 + 解压）
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $manifest = Get-Content core/server/engines/llama/bin/runtime-version.json -Raw | ConvertFrom-Json
+          $url = "https://github.com/ggml-org/llama.cpp/releases/download/$($manifest.tag)/$($manifest.archive)"
+          Invoke-WebRequest -Uri $url -OutFile llama-runtime.zip
+          $hash = (Get-FileHash llama-runtime.zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $manifest.sha256) { throw "llama.cpp 运行库 SHA256 校验失败：$hash" }
+          New-Item -ItemType Directory -Force llama-runtime | Out-Null
+          tar -xf llama-runtime.zip -C llama-runtime
+          $bin = "core/server/engines/llama/bin"
+          Get-ChildItem llama-runtime -Filter *.dll -Recurse | ForEach-Object {
+            Copy-Item $_.FullName -Destination $bin -Force
+          }
+          $missing = @($manifest.files | Where-Object { -not (Test-Path (Join-Path $bin $_)) })
+          if ($missing.Count) { throw "运行库缺少文件: $($missing -join ', ')" }
+          Remove-Item llama-runtime.zip, llama-runtime -Recurse -Force
+
+      - name: 安装依赖
+        run: uv sync --locked --group build
+
+      - name: 打包（PyInstaller → installer-stage）
+        run: uv run --locked --group build python -m PyInstaller --noconfirm --distpath build/installer-stage build-desktop.spec
+
+      - name: 离线自检（不阻塞）
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          .\build\installer-stage\SAI\SAI.exe --self-test
+          Write-Host "self-test exit: $LASTEXITCODE"
+
+      - name: 编译安装包（Inno Setup）
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $candidates = @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+            )
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw "未找到 Inno Setup 的 ISCC.exe" }
+          & $iscc installer\SAI.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败" }
+
+      - name: 生成 SHA256SUMS
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $setup = "dist/installer/SAI-$version-Setup.exe"
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          "$hash  SAI-$version-Setup.exe" | Set-Content dist/installer/SHA256SUMS.txt -Encoding ascii
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAI-${{ steps.version.outputs.version }}-Setup
+          path: |
+            dist/installer/SAI-*-Setup.exe
+            dist/installer/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: 附加到 Release（若已存在）
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          gh release upload $env:GITHUB_REF_NAME "dist\installer\SAI-$version-Setup.exe" dist\installer\SHA256SUMS.txt --clobber
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::Release $env:GITHUB_REF_NAME 尚不存在或上传失败，安装包保留在 Artifact 中"
+          }

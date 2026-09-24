@@ -30,12 +30,17 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
+          SOURCE="$(sed -n "s/^__version__ = '\([^']*\)'.*/\1/p" config_server.py | head -n 1)"
           VER="$INPUT_VERSION"
           if [ -z "$VER" ] && [ "$GITHUB_REF_TYPE" = "tag" ]; then
             VER="${GITHUB_REF_NAME#v}"
           fi
           if [ -z "$VER" ]; then
-            VER="$(sed -n "s/^__version__ = '\([^']*\)'.*/\1/p" config_server.py | head -n 1)"
+            VER="$SOURCE"
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$VER" != "$SOURCE" ]; then
+            echo "::error::tag $VER 与 config_server.py 的 $SOURCE 不一致；请先更新版本号再打 tag"
+            exit 1
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
