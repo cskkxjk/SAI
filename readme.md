@@ -14,8 +14,8 @@
 > 上游项目由 [Haujet Zhao](https://github.com/HaujetZhao) 开发，离线识别、热词系统、LLM 角色等
 > 核心能力均来自上游（原项目图标、名称与版权归上游所有）。本分支在其基础上重做了桌面体验：
 >
-> - 更轻量的推理后端：把 CapsWriter 的后端服务换成 **自研 ONNX 推理 + llama.cpp GGUF 方案**
->   （Fun-ASR、Qwen3-ASR 走 GGUF，Paraformer、SenseVoice 走 ONNX），零 PyTorch 依赖，安装包约 67 MB
+> - 轻量推理后端：Fun-ASR、Qwen3-ASR 走 llama.cpp GGUF，Paraformer、SenseVoice 走 ONNX，零 PyTorch 依赖
+>   （安装包约 67 MB）；运行库在 Windows 自动下载校验修复、macOS 随包内置
 > - 全新的图形启动器：识别设置、录音、快捷键、模型文件、热词与替换、语音 API、设备检测
 >   集中在同一窗口，美术风格参考 [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev)
 > - 一键安装包：开始菜单/桌面快捷方式、卸载入口，安装目录与用户数据分离；macOS 提供 .dmg/.zip
