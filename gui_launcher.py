@@ -2,10 +2,12 @@
 """Windows graphical launcher and configuration editor."""
 from __future__ import annotations
 
+import atexit
 import json
 import math
 import os
 import queue
+import signal
 import subprocess
 import sys
 import tkinter as tk
@@ -182,6 +184,18 @@ class Launcher(tk.Tk):
         self._update_model_info()
         self._refresh_audio_devices()
         self.protocol("WM_DELETE_WINDOW", self._hide_or_close)
+        # 退出兜底：无论用菜单退出、Cmd+Q 还是被强制结束，都清理子进程，
+        # 避免残留服务端占住端口导致下次启动"端口冲突"。
+        atexit.register(self._kill_children_silent)
+        self._closing = False
+        if sys.platform == "darwin":
+            try:
+                # Tk 在 macOS 上把 Cmd+Q 映射到 ::tk::mac::Quit，覆盖它以便清理子进程
+                quit_cmd = self.register(self._close)
+                self.tk.call("proc", "::tk::mac::Quit", "", quit_cmd)
+            except tk.TclError:
+                pass
+            self.bind_all("<Command-q>", lambda _e: self._close())
         self.hardware_after = self.after(100, self._detect_hardware)
         # 启动几秒后再检查更新，避免和模型/设备检测抢启动时间
         self.after(5000, self._auto_check_update)
@@ -1544,6 +1558,7 @@ class Launcher(tk.Tk):
                 command, cwd=CONFIG.parent, env=env, stdin=subprocess.DEVNULL,
                 stdout=output, stderr=subprocess.STDOUT,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                start_new_session=(os.name != "nt"),
             )
         process.sai_role = role
         self.processes.append(process)
@@ -1678,8 +1693,55 @@ class Launcher(tk.Tk):
         dialog.grab_set()
         text.focus_set()
 
+    @staticmethod
+    def _pid_alive(pid):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    def _kill_tree(self, pid):
+        """终止进程及其所有子进程（macOS/Linux 借助独立进程组）。"""
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=10)
+            return
+        try:
+            pgid = os.getpgid(pid)
+        except OSError:
+            pgid = None
+        try:
+            if pgid is not None:
+                os.killpg(pgid, signal.SIGTERM)
+            else:
+                os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        deadline = time.time() + 5
+        while time.time() < deadline and self._pid_alive(pid):
+            time.sleep(0.1)
+        if self._pid_alive(pid):
+            try:
+                if pgid is not None:
+                    os.killpg(pgid, signal.SIGKILL)
+                else:
+                    os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    def _kill_children_silent(self):
+        """atexit/强制退出兜底：只杀进程，不碰 Tk 界面。"""
+        for process in list(getattr(self, "processes", [])):
+            if process.poll() is None:
+                self._kill_tree(process.pid)
+        self.processes = []
+
     def _purge_stale_server(self):
-        """清理上一实例崩溃后残留、仍占用端口的 SAI 服务端进程。"""
+        """清理残留、仍占用端口的 SAI 服务端进程（含打包版）。"""
         if os.name == "nt":
             return
         try:
@@ -1704,11 +1766,10 @@ class Launcher(tk.Tk):
                     capture_output=True, text=True, timeout=5).stdout
             except Exception:
                 continue
-            if "sai.py" in command or "start_server.py" in command:
-                try:
-                    os.kill(pid, 15)
-                except OSError:
-                    pass
+            is_ours = ("sai.py" in command or "start_server.py" in command
+                       or ("--server" in command and "SAI" in command))
+            if is_ours:
+                self._kill_tree(pid)
 
     def _stop_processes(self):
         if self.monitor is not None:
@@ -1716,20 +1777,14 @@ class Launcher(tk.Tk):
             self.monitor = None
         for process in self.processes:
             if process.poll() is None:
-                if os.name == "nt":
-                    subprocess.run(
-                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        timeout=10,
-                    )
-                else:
-                    process.terminate()
+                self._kill_tree(process.pid)
                 try:
-                    process.wait(timeout=5)
+                    process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
         self.processes.clear()
         for ready in self.ready_files.values():
             ready.unlink(missing_ok=True)
@@ -1827,11 +1882,14 @@ class Launcher(tk.Tk):
             self._close()
 
     def _close(self):
+        if getattr(self, "_closing", False):
+            return
         if self.download_thread is not None:
             self.download_cancel.set()
             self.status.set("正在取消下载，请稍候；网络请求最多等待 30 秒")
             self.after(200, self._close)
             return
+        self._closing = True
         if self.hardware_after is not None:
             self.after_cancel(self.hardware_after)
             self.hardware_after = None
