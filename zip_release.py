@@ -4,15 +4,14 @@
 打包脚本 - 使用 7zip 压缩 dist 目录中的构建产物
 
 功能：
-1. 打包 SAI（服务端+客户端）
-2. 打包 SAI-Client（仅客户端）
+1. 打包 SAI（服务端+客户端）→ release/sai-desktop-win-x64.zip
+2. 打包 SAI-Client（仅客户端）→ release/sai-client-win-x64.zip
 3. 智能排除模型文件（.onnx, .dll, .json 等），但保留说明文档
 """
 
 import os
 import subprocess
 from pathlib import Path
-from datetime import datetime
 
 
 def find_7zip():
@@ -215,8 +214,6 @@ def main():
     release_dir = Path('release')
     release_dir.mkdir(exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d")
-
     # 打包配置列表
     packages = []
 
@@ -225,7 +222,7 @@ def main():
     if server_dist.exists():
         packages.append({
             'source': server_dist,
-            'output': release_dir / f'SAI-{timestamp}.zip',
+            'output': release_dir / 'sai-desktop-win-x64.zip',
             'name': '服务端+客户端'
         })
 
@@ -234,7 +231,7 @@ def main():
     if client_dist.exists():
         packages.append({
             'source': client_dist,
-            'output': release_dir / f'SAI-Client-{timestamp}.zip',
+            'output': release_dir / 'sai-client-win-x64.zip',
             'name': '仅客户端'
         })
 

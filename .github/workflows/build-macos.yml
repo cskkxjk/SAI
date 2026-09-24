@@ -130,7 +130,7 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: SAI-${{ steps.version.outputs.version }}-macos-${{ matrix.arch }}
+          name: sai-desktop-macos-${{ matrix.arch }}
           path: release/*
           if-no-files-found: error
 

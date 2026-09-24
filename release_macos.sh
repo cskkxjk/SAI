@@ -1,6 +1,6 @@
 #!/bin/zsh
 # 一键打出 macOS 发布包：
-#   dist/SAI.app 以及 release/SAI-<版本>-macos-<架构>.zip / .dmg
+#   dist/SAI.app 以及 release/sai-desktop-macos-<架构>.zip / .dmg
 # 用法： ./release_macos.sh            # 版本号取自 config_server.__version__
 #        ./release_macos.sh 1.0.4      # 或手动指定版本
 #
@@ -40,8 +40,8 @@ echo "== 整理 app（源码/资源、installed.flag、去模型、ad-hoc 重签
 
 echo "== 压缩发布包 =="
 mkdir -p release
-ZIP="release/SAI-${VER}-macos-${ARCH}.zip"
-DMG="release/SAI-${VER}-macos-${ARCH}.dmg"
+ZIP="release/sai-desktop-macos-${ARCH}.zip"
+DMG="release/sai-desktop-macos-${ARCH}.dmg"
 rm -f "$ZIP" "$DMG"
 ditto -c -k --sequesterRsrc --keepParent dist/SAI.app "$ZIP"
 

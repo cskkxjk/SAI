@@ -134,8 +134,8 @@ def _machine_arch(machine=None):
 def pick_installer(assets, platform_name=None, machine=None):
     """挑选当前平台的安装包资产。
 
-    Windows 优先 SAI-*-Setup.exe；macOS 优先对应架构的 dmg，
-    依次回退到对应架构 zip、任意 dmg、任意 zip。
+    Windows 优先 sai-desktop-win-x64.exe（兼容旧的 SAI-*-Setup.exe）；
+    macOS 优先对应架构的 dmg，依次回退到对应架构 zip、任意 dmg、任意 zip。
     """
     platform_name = platform_name or sys.platform
     assets = [asset for asset in assets if isinstance(asset, dict)]
@@ -152,6 +152,9 @@ def pick_installer(assets, platform_name=None, machine=None):
                 if str(asset.get("name", "")).lower().endswith(suffix):
                     return asset
         return {}
+    for asset in assets:
+        if str(asset.get("name", "")).lower().endswith("sai-desktop-win-x64.exe"):
+            return asset
     for asset in assets:
         if str(asset.get("name", "")).lower().endswith("-setup.exe"):
             return asset
@@ -189,11 +192,11 @@ def parse_release(data, current_version, platform_name=None, machine=None):
 
 
 def installer_name_for(version, platform_name=None, machine=None):
-    """按发布约定推导安装包文件名"""
+    """按发布约定推导安装包文件名（发行资产已统一命名，不含版本号）"""
     platform_name = platform_name or sys.platform
     if platform_name == "darwin":
-        return f"SAI-{version}-macos-{_machine_arch(machine)}.dmg"
-    return f"SAI-{version}-Setup.exe"
+        return f"sai-desktop-macos-{_machine_arch(machine)}.dmg"
+    return "sai-desktop-win-x64.exe"
 
 
 def installer_url_for(tag, name):

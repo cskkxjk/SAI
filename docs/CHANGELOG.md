@@ -2,7 +2,8 @@
 
 ## 未发布（SAI）
 
-- **macOS 支持 Intel 芯片**：新增 `SAI-<版本>-macos-x64.zip`（macOS 12+，Intel），与 Apple Silicon 版本同 tag 发布；同时提供 `.dmg` 拖拽安装镜像（arm64 / x64 均有）。
+- **发行包统一命名**：Windows 安装包 `sai-desktop-win-x64.exe`；macOS `sai-desktop-macos-<架构>.zip` 与 `.dmg`（arm64 / x64）；便携包 `sai-desktop-win-x64.zip`（服务端+客户端）与 `sai-client-win-x64.zip`（仅客户端）。自动更新与构建工作流已按新命名匹配，同时兼容旧的 `SAI-<版本>-Setup.exe` / `SAI-<版本>-macos-<架构>` 资产。
+- **macOS 支持 Intel 芯片**：新增 Intel（x64）架构支持（macOS 12+），与 Apple Silicon 版本同 tag 发布；同时提供 `.dmg` 拖拽安装镜像（arm64 / x64 均有）。
 - **macOS 支持 GGUF 引擎**：Fun-ASR、Qwen3-ASR 与对齐器在 macOS 上可用。打包时按平台注入 llama.cpp 运行库（arm64 / x64 各自对应，压缩包只增加约 3-4 MB），运行库也随 app 分发，首次使用无需手动配置。
 - **macOS 自动更新对齐 Windows**：应用内「下载并安装」在 macOS 上会下载对应架构的安装包、校验 SHA256，退出后自动替换 `SAI.app` 并重新打开；app 所在位置无写入权限时自动打开安装包，按提示拖入「应用程序」即可。macOS 的启动自动检查更新恢复为默认开启。
 - **修复**：更新检查在打包环境中因加载不到 `expat` 而失败的问题（改为打包构建环境自带的 expat 库）。

@@ -85,17 +85,16 @@ jobs:
       - name: 生成 SHA256SUMS
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          $setup = "dist/installer/SAI-$version-Setup.exe"
+          $setup = "dist/installer/sai-desktop-win-x64.exe"
           $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
-          "$hash  SAI-$version-Setup.exe" | Set-Content dist/installer/SHA256SUMS.txt -Encoding ascii
+          "$hash  sai-desktop-win-x64.exe" | Set-Content dist/installer/SHA256SUMS.txt -Encoding ascii
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: SAI-${{ steps.version.outputs.version }}-Setup
+          name: sai-desktop-win-x64
           path: |
-            dist/installer/SAI-*-Setup.exe
+            dist/installer/sai-desktop-win-x64.exe
             dist/installer/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -105,8 +104,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          gh release upload $env:GITHUB_REF_NAME "dist\installer\SAI-$version-Setup.exe" dist\installer\SHA256SUMS.txt --clobber
+          gh release upload $env:GITHUB_REF_NAME "dist\installer\sai-desktop-win-x64.exe" dist\installer\SHA256SUMS.txt --clobber
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::warning::Release $env:GITHUB_REF_NAME 尚不存在或上传失败，安装包保留在 Artifact 中"
           } else {

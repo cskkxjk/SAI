@@ -110,8 +110,8 @@
 
 SAI 在 **Windows 10/11 (64 位)** 与 **macOS 12+**（Apple Silicon 与 Intel）上构建和测试。
 
-- **Windows**：发布 `SAI-<版本>-Setup.exe`，支持应用内自动更新。
-- **macOS**：发布 `SAI-<版本>-macos-arm64.zip` / `SAI-<版本>-macos-x64.zip` 与对应的 `.dmg` 安装镜像；支持 ONNX 引擎（Paraformer、SenseVoice）与 GGUF 引擎（Fun-ASR、Qwen3-ASR）。应用为 ad-hoc 签名，首次打开需右键「打开」；模型不随包分发，首次使用时按需下载。
+- **Windows**：发布 `sai-desktop-win-x64.exe`（安装包）与 `sai-desktop-win-x64.zip`（便携包，另提供仅客户端的 `sai-client-win-x64.zip`），支持应用内自动更新。
+- **macOS**：发布 `sai-desktop-macos-arm64.zip` / `sai-desktop-macos-x64.zip` 与对应的 `.dmg` 安装镜像；支持 ONNX 引擎（Paraformer、SenseVoice）与 GGUF 引擎（Fun-ASR、Qwen3-ASR）。应用为 ad-hoc 签名，首次打开需右键「打开」；模型不随包分发，首次使用时按需下载。
 - **Linux**：本分支没有做适配与打包；上游 CapsWriter-Offline 可在这些系统上用源码运行。
 
 
@@ -121,8 +121,8 @@ SAI 在 **Windows 10/11 (64 位)** 与 **macOS 12+**（Apple Silicon 与 Intel�
 
 #### 使用安装向导
 
-安装包位于 `dist/installer`，运行 `SAI-1.0.4-Setup.exe`。
-这是不含模型的单文件安装包，只需复制 Setup.exe，不再需要旁边的 `.bin` 文件。
+安装包位于 `dist/installer`，运行 `sai-desktop-win-x64.exe`。
+这是不含模型的单文件安装包，只需复制这一个 exe，不再需要旁边的 `.bin` 文件。
 安装过程不下载模型；首次使用本地识别时，在程序配置页从 ModelScope 按需下载。
 
 1. 选择安装语言，接受许可证。
@@ -383,7 +383,7 @@ EXE 和相邻资源必须保持相对位置。下次构建仍会生成内层目�
 ```
 
 Inno Setup 安装路径不同时，请把第二条命令改成实际 `ISCC.exe` 路径。
-安装包不需要任何模型文件。输出在 `dist/installer`，只有一个 Setup.exe。
+安装包不需要任何模型文件。输出在 `dist/installer`，只有一个安装包 exe。
 旧版遗留的 `Setup-*.bin` 分卷文件不再使用，新版生成成功后可删除。
 不要使用含个人日志、录音、API 密钥的旧发布目录作为安装包源；
 默认配置来自 `installer/config_gui.json`，首次安装不会继承本机的麦克风设备选择。

@@ -132,11 +132,11 @@ class UpdateAtomTests(unittest.TestCase):
         self.assertIn("- 优化 C", info.notes)
         self.assertEqual(info.page_url,
                          "https://github.com/cskkxjk/SAI/releases/tag/v1.0.3")
-        self.assertEqual(info.installer_name, "SAI-1.0.3-Setup.exe")
+        self.assertEqual(info.installer_name, "sai-desktop-win-x64.exe")
         self.assertEqual(
             info.installer_url,
             "https://github.com/cskkxjk/SAI/releases/download/v1.0.3/"
-            "SAI-1.0.3-Setup.exe")
+            "sai-desktop-win-x64.exe")
         self.assertEqual(info.published_at, "2026-09-24T00:00:00Z")
         self.assertEqual(info.installer_sha256, "")
         self.assertTrue(info.can_install)
@@ -227,6 +227,24 @@ class MacAssetTests(unittest.TestCase):
             assets, platform_name="darwin", machine="x86_64")
         self.assertEqual(picked["name"], "SAI-1.0.3-macos-x64.zip")
 
+    def test_pick_installer_matches_unified_names(self):
+        assets = [
+            {"name": "sai-desktop-win-x64.exe", "browser_download_url": "u"},
+            {"name": "sai-desktop-macos-arm64.dmg", "browser_download_url": "u"},
+            {"name": "sai-desktop-macos-x64.zip", "browser_download_url": "u"},
+        ]
+        self.assertEqual(
+            update_checker.pick_installer(assets, platform_name="win32")["name"],
+            "sai-desktop-win-x64.exe")
+        self.assertEqual(
+            update_checker.pick_installer(
+                assets, platform_name="darwin", machine="arm64")["name"],
+            "sai-desktop-macos-arm64.dmg")
+        self.assertEqual(
+            update_checker.pick_installer(
+                assets, platform_name="darwin", machine="x86_64")["name"],
+            "sai-desktop-macos-x64.zip")
+
     def test_pick_installer_falls_back_to_any_mac_package(self):
         assets = [
             {"name": "SAI-1.0.3-Setup.exe", "browser_download_url": "u"},
@@ -249,15 +267,15 @@ class MacAssetTests(unittest.TestCase):
     def test_parse_atom_names_mac_installer(self):
         info = update_checker.parse_atom(
             ATOM_XML, "1.0.2", platform_name="darwin", machine="aarch64")
-        self.assertEqual(info.installer_name, "SAI-1.0.3-macos-arm64.dmg")
-        self.assertIn("SAI-1.0.3-macos-arm64.dmg", info.installer_url)
+        self.assertEqual(info.installer_name, "sai-desktop-macos-arm64.dmg")
+        self.assertIn("sai-desktop-macos-arm64.dmg", info.installer_url)
 
     def test_installer_name_for_matches_release_convention(self):
         self.assertEqual(update_checker.installer_name_for(
-            "1.0.4", platform_name="win32"), "SAI-1.0.4-Setup.exe")
+            "1.0.4", platform_name="win32"), "sai-desktop-win-x64.exe")
         self.assertEqual(update_checker.installer_name_for(
             "1.0.4", platform_name="darwin", machine="amd64"),
-            "SAI-1.0.4-macos-x64.dmg")
+            "sai-desktop-macos-x64.dmg")
 
     def test_macos_app_bundle_detects_bundle_path(self):
         bundle = update_checker.macos_app_bundle(
