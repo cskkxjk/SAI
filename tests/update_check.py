@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+import requests
+
 from core import update_checker
 
 INSTALLER_CONTENT = b"setup-binary"
@@ -37,10 +39,13 @@ def release_payload(version="1.0.3", digest=True, prerelease=False, draft=False)
 
 
 class FakeResponse:
-    def __init__(self, payload=None, content=b"", headers=None):
+    def __init__(self, payload=None, content=b"", headers=None, text="",
+                 error=None):
         self.payload = payload
         self.content = content
         self.headers = headers or {}
+        self.text = text
+        self.error = error
         self.status_code = 200
 
     def __enter__(self):
@@ -50,7 +55,8 @@ class FakeResponse:
         return False
 
     def raise_for_status(self):
-        pass
+        if self.error is not None:
+            raise self.error
 
     def json(self):
         return self.payload
@@ -71,6 +77,128 @@ class FakeSession:
         if self.response is None:
             raise AssertionError("不应发起网络请求")
         return self.response
+
+
+class FakeRoutingSession:
+    """按 URL 返回不同响应；值为异常时抛出，用于验证回退逻辑"""
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.trust_env = False
+        self.urls = []
+
+    def get(self, url, **kwargs):
+        self.urls.append(url)
+        result = self.responses.get(url)
+        if result is None:
+            raise AssertionError(f"未预期的请求: {url}")
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+ATOM_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Release notes from SAI</title>
+  <entry>
+    <id>tag:github.com,2008:Repository/1234567890/v1.0.3</id>
+    <title>SAI 1.0.3</title>
+    <link rel="alternate" type="text/html"
+          href="https://github.com/cskkxjk/SAI/releases/tag/v1.0.3"/>
+    <updated>2026-09-24T00:00:00Z</updated>
+    <content type="html">&lt;h3&gt;本版更新&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;修复 A &amp;amp; B&lt;/li&gt;&lt;li&gt;优化 C&lt;/li&gt;&lt;/ul&gt;</content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Repository/1234567890/v1.0.2</id>
+    <title>SAI 1.0.2</title>
+    <link rel="alternate" type="text/html"
+          href="https://github.com/cskkxjk/SAI/releases/tag/v1.0.2"/>
+    <updated>2026-09-23T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;旧版本&lt;/p&gt;</content>
+  </entry>
+</feed>
+"""
+
+
+class UpdateAtomTests(unittest.TestCase):
+    def test_parse_atom_reads_latest_entry(self):
+        info = update_checker.parse_atom(ATOM_XML, "1.0.2")
+        self.assertIsNotNone(info)
+        self.assertEqual(info.version, "1.0.3")
+        self.assertEqual(info.tag, "v1.0.3")
+        self.assertEqual(info.name, "SAI 1.0.3")
+        self.assertIn("本版更新", info.notes)
+        self.assertIn("- 修复 A & B", info.notes)
+        self.assertIn("- 优化 C", info.notes)
+        self.assertEqual(info.page_url,
+                         "https://github.com/cskkxjk/SAI/releases/tag/v1.0.3")
+        self.assertEqual(info.installer_name, "SAI-1.0.3-Setup.exe")
+        self.assertEqual(
+            info.installer_url,
+            "https://github.com/cskkxjk/SAI/releases/download/v1.0.3/"
+            "SAI-1.0.3-Setup.exe")
+        self.assertEqual(info.published_at, "2026-09-24T00:00:00Z")
+        self.assertEqual(info.installer_sha256, "")
+        self.assertTrue(info.can_install)
+
+    def test_parse_atom_ignores_same_older_and_prerelease(self):
+        self.assertIsNone(update_checker.parse_atom(ATOM_XML, "1.0.3"))
+        self.assertIsNone(update_checker.parse_atom(ATOM_XML, "1.0.4"))
+        prerelease = ATOM_XML.replace("v1.0.3", "v1.0.3-rc1")
+        self.assertIsNone(update_checker.parse_atom(prerelease, "1.0.2"))
+        self.assertIsNone(update_checker.parse_atom("<feed/>", "1.0.2"))
+        self.assertIsNone(update_checker.parse_atom("not xml", "1.0.2"))
+
+    def test_fetch_falls_back_to_atom_when_api_limited(self):
+        limited = requests.HTTPError("403 rate limit exceeded")
+        atom_url = "https://example.test/releases.atom"
+        session = FakeRoutingSession({
+            "https://example.test/latest": limited,
+            atom_url: FakeResponse(text=ATOM_XML),
+        })
+        info = update_checker.fetch_latest_release(
+            "1.0.2", session=session, api_url="https://example.test/latest",
+            atom_url=atom_url)
+        self.assertEqual(info.version, "1.0.3")
+        self.assertEqual(session.urls,
+                         ["https://example.test/latest", atom_url])
+        self.assertTrue(session.trust_env)
+
+    def test_fetch_prefers_api_over_atom(self):
+        atom_url = "https://example.test/releases.atom"
+        session = FakeRoutingSession({
+            "https://example.test/latest":
+                FakeResponse(payload=release_payload()),
+            atom_url: FakeResponse(text=ATOM_XML),
+        })
+        info = update_checker.fetch_latest_release(
+            "1.0.2", session=session, api_url="https://example.test/latest",
+            atom_url=atom_url)
+        self.assertEqual(info.installer_sha256,
+                         hashlib.sha256(INSTALLER_CONTENT).hexdigest())
+        self.assertEqual(session.urls, ["https://example.test/latest"])
+
+    def test_fetch_reports_error_when_both_sources_fail(self):
+        atom_url = "https://example.test/releases.atom"
+        session = FakeRoutingSession({
+            "https://example.test/latest": requests.HTTPError("403"),
+            atom_url: requests.ConnectionError("boom"),
+        })
+        with self.assertRaises(RuntimeError) as caught:
+            update_checker.fetch_latest_release(
+                "1.0.2", session=session, api_url="https://example.test/latest",
+                atom_url=atom_url)
+        self.assertIn("releases.atom", str(caught.exception))
+
+    def test_failed_check_retries_after_attempt_interval(self):
+        state = {}
+        update_checker.mark_attempted(state, now=1000.0)
+        self.assertFalse(update_checker.should_check(state, now=1000.0 + 60))
+        self.assertTrue(update_checker.should_check(
+            state, now=1000.0 + update_checker.ATTEMPT_INTERVAL + 1))
+        update_checker.mark_checked(state, now=2000.0)
+        self.assertNotIn("last_attempt", state)
+        self.assertFalse(update_checker.should_check(state, now=2000.0 + 60))
 
 
 class UpdateCheckerTests(unittest.TestCase):

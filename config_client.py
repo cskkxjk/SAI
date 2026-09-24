@@ -5,7 +5,7 @@ from pathlib import Path
 from core.runtime_paths import DATA_DIR
 
 # 版本信息
-__version__ = '1.0.2'
+__version__ = '1.0.3'
 
 # 项目根目录
 BASE_DIR = str(DATA_DIR)
@@ -53,7 +53,8 @@ class ClientConfig:
 
     enter_apps   = [('happ.exe', 0.5), ('hexin.exe', 0.5)]  # (应用名, 延迟秒数) 输出完成后自动回车，如同花顺，输入股票名后，需要回车才能切换
 
-    save_audio = True           # 是否保存录音文件
+    save_audio = _gui_value('save_audio', True)     # 是否保存录音文件与日记
+    audio_keep_days = _gui_value('audio_keep_days', 3)  # 录音自动清理：保留最近多少天，0 表示永久保留
     audio_name_len = 20         # 将录音识别结果的前多少个字存储到录音文件名中，建议不要超过200
     
     context = _gui_value('context', '')

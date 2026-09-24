@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -1071,6 +1072,82 @@ class KoreanTokenizerFallbackTests(unittest.TestCase):
             processor = module.AlignerProcessor()
             self.assertEqual(processor.tokenize("你好 world", "chinese"),
                              ["你", "好", "world"])
+
+
+class RecordingRetentionTests(unittest.TestCase):
+    """录音保留策略：只删除过期音频，日记与其它文件保留。"""
+
+    def _make_tree(self, root, now):
+        assets = root / "2026" / "09" / "assets"
+        assets.mkdir(parents=True)
+        old = assets / "(20260901-090000)旧录音.mp3"
+        new = assets / "(20260923-090000)新录音.wav"
+        keep = assets / "note.txt"
+        diary = root / "2026" / "09" / "01.md"
+        for path in (old, new, keep, diary):
+            path.write_bytes(b"data")
+        stale = now - 10 * 86400
+        for path in (old, keep, diary):
+            os.utime(path, (stale, stale))
+        os.utime(new, (now - 3600, now - 3600))
+        return old, new, keep, diary
+
+    def test_cleanup_removes_only_expired_recordings(self):
+        from core.client.audio.file_manager import cleanup_old_recordings
+        now = time.time()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new, keep, diary = self._make_tree(root, now)
+            removed = cleanup_old_recordings(root, 3, now=now)
+            self.assertEqual(removed, [old])
+            self.assertFalse(old.exists())
+            self.assertTrue(new.exists())
+            self.assertTrue(keep.exists())
+            self.assertTrue(diary.exists())
+
+    def test_keep_days_zero_or_invalid_keeps_everything(self):
+        from core.client.audio.file_manager import cleanup_old_recordings
+        now = time.time()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new, _, _ = self._make_tree(root, now)
+            for value in (0, -1, "-1", "abc", None):
+                self.assertEqual(cleanup_old_recordings(root, value, now=now), [])
+            self.assertTrue(old.exists())
+            self.assertTrue(new.exists())
+
+    def test_keep_days_accepts_string_numbers(self):
+        from core.client.audio.file_manager import cleanup_old_recordings
+        now = time.time()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new, _, _ = self._make_tree(root, now)
+            self.assertEqual(cleanup_old_recordings(root, "3", now=now), [old])
+            self.assertTrue(new.exists())
+
+    def test_cleanup_ignores_missing_and_unrelated_files(self):
+        from core.client.audio.file_manager import cleanup_old_recordings
+        now = time.time()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(cleanup_old_recordings(root, 3, now=now), [])
+            stray = root / "2026" / "09" / "assets" / "old.txt"
+            stray.parent.mkdir(parents=True)
+            stray.write_bytes(b"data")
+            os.utime(stray, (now - 30 * 86400, now - 30 * 86400))
+            self.assertEqual(cleanup_old_recordings(root, 3, now=now), [])
+            self.assertTrue(stray.exists())
+
+    def test_audio_folder_prefers_the_latest_month(self):
+        from core.client.audio.file_manager import audio_folder
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(audio_folder(root), root)
+            older = root / "2026" / "08" / "assets"
+            newer = root / "2026" / "09" / "assets"
+            for folder in (older, newer):
+                folder.mkdir(parents=True)
+            self.assertEqual(audio_folder(root), newer)
 
 
 if __name__ == "__main__":

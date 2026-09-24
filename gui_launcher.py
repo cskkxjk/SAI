@@ -14,11 +14,13 @@ import time
 import uuid
 import webbrowser
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 import sounddevice as sd
 from core import update_checker
 from core.audio_devices import physical_input_devices, resolve_input_device
-from core.runtime_paths import APP_DIR, DATA_DIR, initialize_user_data
+from core.runtime_paths import (APP_DIR, DATA_DIR, default_data_directory,
+                                initialize_user_data, write_pointer)
+from core.tools.data_migration import move_data, validate_target
 from core.tools.llama_runtime import verify_llama_runtime
 from core.model_download import (download_llama_runtime, download_model,
                                  DownloadCancelled, missing_files, model_files)
@@ -161,6 +163,8 @@ class Launcher(tk.Tk):
             "paste": tk.BooleanVar(value=False),
             "audio_device": tk.StringVar(value=DEFAULT_MIC),
             "keep_microphone_open": tk.BooleanVar(value=False),
+            "save_audio": tk.BooleanVar(value=True),
+            "audio_keep_days": tk.StringVar(value="3"),
             "auto_check_update": tk.BooleanVar(value=True),
             "close_behavior": tk.StringVar(value=CLOSE_CHOICES["ask"]),
             "asr_api_base_url": tk.StringVar(value="https://api.openai.com/v1"),
@@ -611,8 +615,103 @@ class Launcher(tk.Tk):
         PillButton(control, "刷新", command=lambda: self._refresh_audio_devices(True),
                    kind="secondary", width=64, height=32, background=CARD_BG,
                    padx=10).pack(side="left", padx=(8, 0))
-        self._row(form, 0, "录音设备", control,
-                  hint="选择用于识别的麦克风；设备热插拔后点击刷新重新读取。")
+        row = self._row(form, 0, "录音设备", control,
+                        hint="选择用于识别的麦克风；设备热插拔后点击刷新重新读取。")
+        row = self._switch_row(
+            form, row, self.vars["save_audio"], "保存录音与日记",
+            "把每次识别的录音和文字按“年/月”归档到数据目录，可在下方打开文件夹；"
+            "关闭后不再保存录音，也不会生成日记。")
+        folder_row = ttk.Frame(form, style="Card.TFrame")
+        PillButton(folder_row, "打开录音文件夹", command=self._open_audio_folder,
+                   kind="secondary", width=132, height=32, background=CARD_BG,
+                   padx=10).pack(side="right")
+        row = self._row(form, row, "录音文件夹", folder_row,
+                        hint=f"每次识别的录音与日记按“年/月”归档在：{DATA_DIR}")
+        data_row = ttk.Frame(form, style="Card.TFrame")
+        self.data_dir_label = ttk.Label(data_row, text=str(DATA_DIR),
+                                        style="Hint.TLabel")
+        self.data_dir_label.pack(side="left", padx=(0, 12))
+        PillButton(data_row, "更改...", command=self._change_data_dir,
+                   kind="secondary", width=88, height=32, background=CARD_BG,
+                   padx=10).pack(side="right", padx=(8, 0))
+        PillButton(data_row, "打开", command=self._open_data_folder,
+                   kind="secondary", width=72, height=32, background=CARD_BG,
+                   padx=10).pack(side="right")
+        row = self._row(form, row, "数据目录", data_row,
+                        hint="配置、热词、LLM、日志、录音与日记都保存在这里；"
+                             "可改到其它磁盘。更改后需要重启 SAI。")
+        self._row(form, row, "自动清理录音", ttk.Entry(
+            form, textvariable=self.vars["audio_keep_days"], width=14,
+            font=ui_font()),
+            hint="启动时删除超过该天数的录音文件，日记文字会保留；"
+                 "默认 3 天，填 0 表示永久保留。")
+
+    def _open_audio_folder(self):
+        from core.client.audio.file_manager import audio_folder
+        try:
+            folder = audio_folder(DATA_DIR)
+            folder.mkdir(parents=True, exist_ok=True)
+            os.startfile(folder)
+        except OSError as exc:
+            messagebox.showerror("无法打开录音文件夹", str(exc), parent=self)
+
+    def _open_data_folder(self):
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            os.startfile(DATA_DIR)
+        except OSError as exc:
+            messagebox.showerror("无法打开数据目录", str(exc), parent=self)
+
+    def _change_data_dir(self):
+        if self.download_thread is not None or self.starting:
+            messagebox.showinfo("请稍后再试", "请等待下载或启动完成后再更改数据目录。",
+                                parent=self)
+            return
+        chosen = filedialog.askdirectory(
+            parent=self, title="选择数据存放目录", mustexist=False,
+            initialdir=str(DATA_DIR.parent))
+        if not chosen:
+            return
+        target = Path(chosen)
+        error = validate_target(DATA_DIR, target, app_dir=APP_DIR)
+        if error:
+            messagebox.showerror("无法使用该目录", error, parent=self)
+            return
+        answer = messagebox.askyesnocancel(
+            "更改数据目录",
+            "配置、热词、LLM、日志、录音与日记都会保存到：\n"
+            f"{target}\n\n"
+            "是否把现有数据一并移动过去？\n\n"
+            "是：迁移到新目录，然后需要重启 SAI\n"
+            "否：只改位置，旧数据留在原处\n"
+            "取消：放弃更改",
+            parent=self)
+        if answer is None:
+            return
+        if not self._save(quiet=True):
+            return
+        self._stop_processes()
+        self.status.set("正在迁移数据...")
+        self.update_idletasks()
+        failed = []
+        if answer:
+            report = move_data(DATA_DIR, target)
+            failed = report["failed"]
+        folders = {APP_DIR, default_data_directory(APP_DIR)}
+        try:
+            write_pointer(target, sorted(folders))
+        except OSError as exc:
+            messagebox.showerror("无法保存数据目录", str(exc), parent=self)
+            return
+        if failed:
+            messagebox.showwarning(
+                "部分数据未能移动",
+                "以下内容留在原目录，请手动复制：\n\n" + "\n".join(failed),
+                parent=self)
+        messagebox.showinfo(
+            "数据目录已更改",
+            f"下次启动将使用：\n{target}\n\n请重新打开 SAI。", parent=self)
+        self._close()
 
     def _build_shortcut_card(self, body):
         form = self._card(body, "快捷键")
@@ -1097,8 +1196,11 @@ class Launcher(tk.Tk):
         if thread is not None:
             thread.join()
         self.update_check_thread = None
-        # 成功或失败都记录时间，24 小时内不重复请求
-        update_checker.mark_checked(self.update_state)
+        if event == "error":
+            # 失败只记录尝试时间，过一会儿还能再试；成功才进入 24 小时间隔
+            update_checker.mark_attempted(self.update_state)
+        else:
+            update_checker.mark_checked(self.update_state)
         update_checker.write_state(self.update_state)
         if manual and self.status.get() == "正在检查更新...":
             self.status.set(getattr(self, "_status_before_check", "未启动"))
@@ -1387,7 +1489,13 @@ class Launcher(tk.Tk):
             if not math.isfinite(threshold) or threshold < 0:
                 raise ValueError
         except ValueError:
-            raise ValueError("阈值必须是非负数字")
+            raise ValueError("快捷键阈值必须是非负数。")
+        try:
+            keep_days = int(float(self.vars["audio_keep_days"].get()))
+            if keep_days < 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError("录音保留天数必须是不小于 0 的整数，0 表示永久保留。")
         data = {key: var.get() for key, var in self.vars.items()}
         data["model_type"] = self._model_key()
         if data["model_type"] == "openai_api":
@@ -1399,6 +1507,7 @@ class Launcher(tk.Tk):
         selected_device = self.vars["audio_device"].get()
         data["audio_device"] = self.audio_devices[selected_device]
         data["threshold"] = threshold
+        data["audio_keep_days"] = keep_days
         data["child_tray"] = False
         data["shortcuts"] = self._shortcut_data()
         data["close_action"] = self._close_key()
@@ -1527,7 +1636,8 @@ class Launcher(tk.Tk):
         recording = log_dir / f".recording-{role}-{uuid.uuid4().hex}"
         self.recording_files[role] = recording
         env = os.environ.copy()
-        env.update(SAI_GUI="1", SAI_READY_FILE=str(ready),
+        env.update(SAI_GUI="1", SAI_DATA_DIR=str(DATA_DIR),
+                   SAI_READY_FILE=str(ready),
                    SAI_RECORDING_FLAG=str(recording),
                    PYTHONIOENCODING="utf-8")
         with (log_dir / f"{role}_bootstrap.log").open("w", encoding="utf-8") as output:

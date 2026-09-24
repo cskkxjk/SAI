@@ -6,6 +6,8 @@
   "threshold": 0.3,
   "context": "",
   "paste": false,
+  "save_audio": true,
+  "audio_keep_days": 3,
   "auto_check_update": true,
   "child_tray": false
 }
