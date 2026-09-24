@@ -1,11 +1,13 @@
 """Release assets exclude documentation images, but retain engine resources."""
 
 import ast
+import sys
 from pathlib import Path
 from shutil import copy2, copytree, ignore_patterns
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 from zip_release import create_file_list
 
@@ -104,6 +106,65 @@ class ReleaseAssetsTests(unittest.TestCase):
                 }
                 self.assertIn("assets/icon.ico", assignments["my_files"])
                 self.assertNotIn("assets", assignments["link_folders"])
+
+
+class ExpatPinTests(unittest.TestCase):
+    def test_release_specs_pin_expat_binary(self):
+        for filename in ("build-desktop.spec", "build-macos.spec"):
+            with self.subTest(filename=filename):
+                tree = ast.parse((ROOT / filename).read_text(encoding="utf-8"))
+                names = {node.name for node in tree.body
+                         if isinstance(node, ast.FunctionDef)}
+                self.assertIn("pin_expat_binary", names)
+                calls = [node for node in ast.walk(tree)
+                         if isinstance(node, ast.Call)
+                         and isinstance(node.func, ast.Name)
+                         and node.func.id == "pin_expat_binary"]
+                self.assertTrue(calls)
+
+    def test_expat_pin_prefers_build_environment_copy(self):
+        for filename in ("build-desktop.spec", "build-macos.spec"):
+            tree = ast.parse((ROOT / filename).read_text(encoding="utf-8"))
+            function = next(node for node in tree.body
+                            if isinstance(node, ast.FunctionDef)
+                            and node.name == "pin_expat_binary")
+            module = ast.Module(body=[function], type_ignores=[])
+            for platform, library in (("win32", "libexpat.dll"),
+                                      ("darwin", "libexpat.1.dylib")):
+                with self.subTest(spec=filename, platform=platform):
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        (root / "DLLs").mkdir()
+                        (root / "Library" / "bin").mkdir(parents=True)
+                        correct = root / "Library" / "bin" / library
+                        correct.write_bytes(b"correct")
+                        wrong = root / "elsewhere" / library
+                        wrong.parent.mkdir()
+                        wrong.write_bytes(b"wrong")
+                        keep = root / "elsewhere" / "keep.dll"
+                        keep.write_bytes(b"keep")
+                        analysis = SimpleNamespace(binaries=[
+                            (library, str(wrong), "BINARY"),
+                            ("keep.dll", str(keep), "BINARY"),
+                        ])
+                        fake_sys = SimpleNamespace(
+                            platform=platform, base_prefix=str(root),
+                            executable=str(root / "python.exe"))
+                        fake_pyexpat = SimpleNamespace(
+                            __file__=str(root / "DLLs" / "pyexpat.pyd"))
+                        scope = {"Path": Path, "sys": fake_sys}
+                        with mock.patch.dict(sys.modules,
+                                             {"pyexpat": fake_pyexpat}):
+                            exec(compile(module, filename, "exec"), scope)
+                            chosen = scope["pin_expat_binary"](analysis)
+                        self.assertEqual(chosen, correct)
+                        self.assertEqual(
+                            [entry for entry in analysis.binaries
+                             if Path(str(entry[0])).name == library],
+                            [(library, str(correct), "BINARY")])
+                        self.assertIn(
+                            ("keep.dll", str(keep), "BINARY"),
+                            analysis.binaries)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 import json
+import sys
 from shutil import copy2, copytree, ignore_patterns
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
 from PyInstaller.utils.hooks import collect_data_files
@@ -46,6 +47,41 @@ a.pure = [(name, src, kind) for name, src, kind in a.pure
 a.datas = [(name, src, kind) for name, src, kind in a.datas
            if not any(name.replace("\\", "/").startswith(m + "/") or
                       name in (m + ".py", m + ".pyc") for m in private)]
+
+
+def pin_expat_binary(analysis):
+    """打包构建环境自带的 libexpat，避免解析到其它 Python 环境的副本。"""
+    names = (("libexpat.dll",) if sys.platform == "win32"
+             else ("libexpat.1.dylib", "libexpat.dylib"))
+    candidates = []
+    try:
+        import pyexpat
+        candidates.append(Path(pyexpat.__file__).parent)
+    except ImportError:
+        pass
+    candidates += [
+        Path(sys.base_prefix) / "DLLs",
+        Path(sys.base_prefix) / "Library" / "bin",
+        Path(sys.base_prefix),
+        Path(sys.executable).parent / "DLLs",
+        Path(sys.executable).parent,
+    ]
+    for directory in candidates:
+        for name in names:
+            candidate = directory / name
+            if candidate.is_file():
+                analysis.binaries = [
+                    entry for entry in analysis.binaries
+                    if Path(str(entry[0])).name not in names
+                    and Path(str(entry[1])).name not in names]
+                analysis.binaries.append((name, str(candidate), "BINARY"))
+                print(f"pinned expat library: {candidate}")
+                return candidate
+    print("expat library not found; keep PyInstaller default")
+    return None
+
+
+pin_expat_binary(a)
 exe = EXE(
     PYZ(a.pure), a.scripts, [], exclude_binaries=True,
     name="SAI", console=False, icon=str(root / "assets/icon.ico"),
