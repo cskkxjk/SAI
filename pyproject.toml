@@ -1,6 +1,6 @@
 [project]
 name = "sai"
-version = "1.0.4"
+version = "1.0.5"
 description = "SAI 离线语音输入工具"
 requires-python = ">=3.13,<3.15"
 

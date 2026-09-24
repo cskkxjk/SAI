@@ -1,11 +1,14 @@
 # 更新日志
 
-## 未发布（SAI）
+## v1.0.5（SAI）
 
 - **发行包统一命名**：Windows 安装包 `sai-desktop-win-x64.exe`；macOS `sai-desktop-macos-<架构>.zip` 与 `.dmg`（arm64 / x64）；便携包 `sai-desktop-win-x64.zip`（服务端+客户端）与 `sai-client-win-x64.zip`（仅客户端）。自动更新与构建工作流已按新命名匹配，同时兼容旧的 `SAI-<版本>-Setup.exe` / `SAI-<版本>-macos-<架构>` 资产。
 - **macOS 支持 Intel 芯片**：新增 Intel（x64）架构支持（macOS 12+），与 Apple Silicon 版本同 tag 发布；同时提供 `.dmg` 拖拽安装镜像（arm64 / x64 均有）。
 - **macOS 支持 GGUF 引擎**：Fun-ASR、Qwen3-ASR 与对齐器在 macOS 上可用。打包时按平台注入 llama.cpp 运行库（arm64 / x64 各自对应，压缩包只增加约 3-4 MB），运行库也随 app 分发，首次使用无需手动配置。
 - **macOS 自动更新对齐 Windows**：应用内「下载并安装」在 macOS 上会下载对应架构的安装包、校验 SHA256，退出后自动替换 `SAI.app` 并重新打开；app 所在位置无写入权限时自动打开安装包，按提示拖入「应用程序」即可。macOS 的启动自动检查更新恢复为默认开启。
+- **热词测试更真实**：热词页「测试替换」现在先对原文做热词音素纠错，再套用 `hot-rule` 正则规则，与听写时的实际处理顺序一致。
+- **Apple Silicon 性能**：推理线程按物理核心配置（Apple Silicon 无超线程，此前只用了一半核心；batch 线程不再按逻辑核超配）。
+- **macOS 安装包瘦身**：打包时剔除动态库的调试符号，应用体积约减少 15%（arm64：379 MB → 321 MB）。
 - **修复**：更新检查在打包环境中因加载不到 `expat` 而失败的问题（改为打包构建环境自带的 expat 库）。
 
 ## v1.0.4（SAI）

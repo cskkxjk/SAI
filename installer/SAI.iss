@@ -5,7 +5,7 @@
 #ifndef OutputPath
   #define OutputPath "..\dist\installer"
 #endif
-#define AppVersion "1.0.4"
+#define AppVersion "1.0.5"
 
 [Setup]
 AppId={{23100B11-53C4-4AFA-93E6-8C054B16B942}
