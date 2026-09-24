@@ -53,6 +53,8 @@ class AudioRecorder:
         self._start_time: float = 0.0
         self._duration: float = 0.0
         self._cache: list = []
+        self._voice_cache: list = []
+        self._voice_enabled: bool = False
 
     @property
     def state(self) -> ClientState:
@@ -94,6 +96,8 @@ class AudioRecorder:
             self._start_time = 0.0
             self._duration = 0.0
             self._cache = []
+            self._voice_cache = []
+            self._voice_enabled = bool(getattr(Config, 'voice_phrase', False))
             has_signal = False
             
             # 音频文件管理
@@ -140,13 +144,18 @@ class AudioRecorder:
                     self._duration += len(data) / 48000
                     if Config.save_audio and self._file_manager:
                         self._file_manager.write(data)
-                    
+
+                    # 语音短语匹配需要整段 16k 音频
+                    mono16k = np.mean(data[::3], axis=1)
+                    if self._voice_enabled:
+                        self._voice_cache.append(mono16k)
+
                     # 发送音频数据用于识别
                     message = AudioMessage(
                         task_id=self.task_id,
                         source='mic',
                         data=base64.b64encode(
-                            np.mean(data[::3], axis=1).tobytes()
+                            mono16k.tobytes()
                         ).decode('utf-8'),
                         is_final=False,
                         time_start=self._start_time,
@@ -174,11 +183,15 @@ class AudioRecorder:
                         if Config.save_audio and self._file_manager:
                             self._file_manager.write(data)
 
+                        mono16k = np.mean(data[::3], axis=1)
+                        if self._voice_enabled:
+                            self._voice_cache.append(mono16k)
+
                         message = AudioMessage(
                             task_id=self.task_id,
                             source='mic',
                             data=base64.b64encode(
-                                np.mean(data[::3], axis=1).tobytes()
+                                mono16k.tobytes()
                             ).decode('utf-8'),
                             is_final=False,
                             time_start=self._start_time,
@@ -211,6 +224,26 @@ class AudioRecorder:
                         language=Config.language,
                     )
                     asyncio.create_task(self._send_message(message))
+
+                    # 语音短语匹配（音频层，与识别并行；结果由结果处理器消费）
+                    if self._voice_enabled and self._voice_cache:
+                        audio = np.concatenate(self._voice_cache)
+                        self._voice_cache = []
+                        try:
+                            from core.client.voice_phrase.manager import (
+                                get_voice_phrase_manager,
+                            )
+                            matches = await asyncio.to_thread(
+                                get_voice_phrase_manager().match, audio
+                            )
+                        except Exception as exc:
+                            matches = []
+                            logger.error(f"语音短语匹配失败: {exc}", exc_info=True)
+                        if matches:
+                            self.state.register_voice_matches(self.task_id, matches)
+                            logger.info(
+                                f"语音短语命中: {', '.join(match.text for match in matches)}"
+                            )
                     break
 
         except asyncio.CancelledError:
@@ -230,11 +263,13 @@ class AudioRecorder:
             logger.debug(
                 f"录音任务被取消，已排空队列残留 {drained} 条，任务ID: {self.task_id}"
             )
+            self._voice_cache = []
             raise
 
         except Exception as e:
             logger.error(f"录音任务错误: {e}", exc_info=True)
         finally:
+            self._voice_cache = []
             if self._file_manager:
                 self._file_manager.finish()
     

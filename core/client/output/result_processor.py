@@ -25,6 +25,7 @@ from core.client.udp.udp_broadcaster import broadcast_output_udp
 from core.tools.zhconv import convert as zhconv_convert
 from core.client.audio.file_manager import AudioFileManager
 from core.client.llm.llm_write_md import write_llm_md
+from core.client.voice_phrase.replace import apply_replacements
 
 if TYPE_CHECKING:
     from core.client.state import ClientState
@@ -223,6 +224,29 @@ class ResultProcessor:
                 text = zhconv_convert(text, Config.traditional_locale)
             except Exception as e:
                 logger.warning(f"繁体转换失败: {e}")
+
+        # 0. 语音短语替换（音频层命中，优先级最高）
+        voice_matches = self.state.pop_voice_matches(message.task_id)
+        if voice_matches:
+            try:
+                text, voice_applied = apply_replacements(
+                    text, message.tokens, message.timestamps, voice_matches
+                )
+            except Exception as e:
+                voice_applied = []
+                logger.warning(f"语音短语替换失败: {e}")
+            if voice_applied:
+                summary = "、".join(match.text for match in voice_applied)
+                console.print(f'    语音短语：[magenta]{summary}[/]')
+                logger.info(f"语音短语替换: {summary}")
+                if Config.voice_phrase_hint:
+                    try:
+                        from core.client.ui import toast
+                        toast(f"语音短语替换：{summary}", duration=2000)
+                    except Exception as e:
+                        logger.debug(f"语音短语提示失败: {e}")
+            else:
+                logger.debug("语音短语命中但未能定位文本区间，已跳过替换")
 
         # 1. 音素检索，热词替换
         hotword_start = time.monotonic()

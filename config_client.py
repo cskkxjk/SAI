@@ -72,6 +72,10 @@ class ClientConfig:
     hot_similar = 0.6           # RAG 相似热词阈值（低阈值，用于 LLM 上下文）
     hot_rule = True             # 是否启用自定义规则替换（基于正则表达式）
 
+    voice_phrase = _gui_value('voice_phrase', False)                      # 是否启用语音短语替换（说短语，替换为录入时标注的文字）
+    voice_phrase_threshold = _gui_value('voice_phrase_threshold', 0.45)   # 语音短语命中阈值（DTW 距离，越小越严格）
+    voice_phrase_hint = _gui_value('voice_phrase_hint', True)             # 命中语音短语时用 Toast 提示（调试用）
+
     llm_enabled = True          # 是否启用 LLM 润色功能，需要配置 LLM/ 目录下的角色文件
     llm_stop_key = 'esc'        # 中断 LLM 输出的快捷键
 

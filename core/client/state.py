@@ -63,6 +63,7 @@ class ClientState:
     recording: bool = False
     recording_start_time: float = 0.0
     audio_files: Dict[str, Path] = field(default_factory=dict)
+    voice_matches: Dict[str, list] = field(default_factory=dict)
 
     # 最近一次识别结果（用于手动添加纠错记录）
     last_recognition_text: Optional[str] = None
@@ -209,6 +210,32 @@ class ClientState:
         if file_path:
             logger.debug(f"获取音频文件: task_id={task_id}, path={file_path}")
         return file_path
+
+    def register_voice_matches(self, task_id: str, matches: list) -> None:
+        """
+        注册语音短语匹配结果（音频层命中，供最终结果替换）
+
+        Args:
+            task_id: 任务ID
+            matches: PhraseMatch 列表
+        """
+        self.voice_matches[task_id] = list(matches or [])
+        logger.debug(f"注册语音短语匹配: task_id={task_id}, 数量={len(self.voice_matches[task_id])}")
+
+    def pop_voice_matches(self, task_id: str) -> list:
+        """
+        获取并移除语音短语匹配结果
+
+        Args:
+            task_id: 任务ID
+
+        Returns:
+            PhraseMatch 列表，如果不存在则返回空列表
+        """
+        matches = self.voice_matches.pop(task_id, [])
+        if matches:
+            logger.debug(f"获取语音短语匹配: task_id={task_id}, 数量={len(matches)}")
+        return matches
 
     def set_output_text(self, text: str) -> None:
         """

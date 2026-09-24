@@ -3,16 +3,21 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
+from config_client import ClientConfig as Config
 from core.client.voice_phrase.features import FEATURE_VERSION, N_CEPS, SAMPLE_RATE, mfcc
+from core.client.voice_phrase.manager import VoicePhraseManager
 from core.client.voice_phrase.matcher import (
+    PhraseMatch,
     PhraseTemplate,
     dtw_distance,
     match_phrases,
     segment_by_energy,
 )
+from core.client.voice_phrase.replace import apply_replacements
 from core.client.voice_phrase.storage import VoicePhraseStore
 
 
@@ -145,6 +150,84 @@ class StoreTests(unittest.TestCase):
                 store.add("", [np.zeros(16000, dtype=np.float32)])
             with self.assertRaises(ValueError):
                 store.add("文字", [])
+
+
+class ReplaceTests(unittest.TestCase):
+    def _match(self, text, start, end, score=0.2, phrase_id="p1"):
+        return PhraseMatch(phrase_id=phrase_id, text=text, start=start, end=end, score=score)
+
+    def test_replacement_uses_token_timestamps(self):
+        tokens = list("帮我打开设置面板")
+        timestamps = [i * 0.3 for i in range(len(tokens))]
+        # “打开设置”是第 2~5 个 token（0.6s ~ 1.8s）
+        new_text, applied = apply_replacements(
+            "帮我打开设置面板", tokens, timestamps, [self._match("打开控制", 0.6, 1.75)]
+        )
+        self.assertEqual(new_text, "帮我打开控制面板")
+        self.assertEqual([m.text for m in applied], ["打开控制"])
+
+    def test_no_overlapping_tokens_skips(self):
+        tokens = list("你好世界")
+        timestamps = [i * 0.3 for i in range(len(tokens))]
+        new_text, applied = apply_replacements(
+            "你好世界", tokens, timestamps, [self._match("问候", 5.0, 6.0)]
+        )
+        self.assertEqual(new_text, "你好世界")
+        self.assertEqual(applied, [])
+
+    def test_missing_timestamps_skips(self):
+        new_text, applied = apply_replacements(
+            "你好世界", ["你好世界"], [], [self._match("问候", 0.0, 1.0)]
+        )
+        self.assertEqual((new_text, applied), ("你好世界", []))
+
+    def test_multiple_replacements_apply_in_order(self):
+        tokens = list("请打开设置和帮助")
+        timestamps = [i * 0.3 for i in range(len(tokens))]
+        matches = [
+            self._match("设置页面", 0.9, 1.35, phrase_id="p1"),
+            self._match("帮助文档", 1.8, 2.35, phrase_id="p2"),
+        ]
+        new_text, applied = apply_replacements("请打开设置和帮助", tokens, timestamps, matches)
+        self.assertEqual(new_text, "请打开设置页面和帮助文档")
+        self.assertEqual([m.text for m in applied], ["设置页面", "帮助文档"])
+
+    def test_overlapping_replacements_keep_best_score(self):
+        tokens = list("打开帮助")
+        timestamps = [i * 0.3 for i in range(len(tokens))]
+        matches = [
+            self._match("差命中", 0.0, 0.65, score=0.4, phrase_id="p1"),
+            self._match("好命中", 0.0, 0.35, score=0.15, phrase_id="p2"),
+        ]
+        new_text, applied = apply_replacements("打开帮助", tokens, timestamps, matches)
+        self.assertEqual(new_text, "好命中帮助")
+        self.assertEqual([m.text for m in applied], ["好命中"])
+
+
+class ManagerTests(unittest.TestCase):
+    def test_manager_reloads_and_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = VoicePhraseStore(Path(tmp) / "voice-phrases")
+            phrase = _chirp(300, 900, 1.0)
+            store.add("打开帮助文档", [phrase])
+            manager = VoicePhraseManager(store=store)
+            audio = np.concatenate([_silence(0.6), phrase, _silence(0.4)])
+            with mock.patch.object(Config, "voice_phrase", True), mock.patch.object(
+                Config, "voice_phrase_threshold", 0.45
+            ):
+                matches = manager.match(audio)
+                self.assertEqual(len(matches), 1)
+                self.assertEqual(matches[0].text, "打开帮助文档")
+                # 索引变化后自动重载
+                store.add("第二个短语", [_chirp(500, 1500, 0.8)])
+                self.assertEqual(len(manager.reload_if_changed()), 2)
+
+    def test_manager_respects_disable_switch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = VoicePhraseStore(Path(tmp) / "voice-phrases")
+            manager = VoicePhraseManager(store=store)
+            with mock.patch.object(Config, "voice_phrase", False):
+                self.assertEqual(manager.match(np.zeros(16000, dtype=np.float32)), [])
 
 
 if __name__ == "__main__":
