@@ -178,6 +178,7 @@ updates/
 .claude
 .vscode
 .agent
+.DS_Store
 
 diag*.py
 test_*.py 

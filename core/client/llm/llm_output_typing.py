@@ -9,6 +9,7 @@ LLM Typing 输出模式
 （中文无法键入），keyboard.write 的事件也会被搅乱。
 """
 import asyncio
+import sys
 
 from config_client import ClientConfig as Config
 from core.tools.asyncio_to_thread import to_thread
@@ -27,6 +28,11 @@ async def handle_typing_mode(handler, text: str, paste: bool = None, matched_hot
     if not paste and is_remote_target():
         paste = True
         logger.debug("远程桌面 / 虚拟桌面无法可靠键入，改用剪贴板粘贴输出")
+
+    # macOS：逐字键入的英文会被系统输入法（如拼音）拦截；角色输出统一走剪贴板粘贴
+    if sys.platform == 'darwin':
+        paste = True
+        logger.debug("macOS 角色输出改用剪贴板粘贴，避免输入法拦截英文")
 
     if not role_config:
         # 不应发生，但作为防守
