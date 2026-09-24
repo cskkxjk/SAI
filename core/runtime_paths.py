@@ -13,6 +13,15 @@ DATA_DIR_NAME = "SAI"
 LEGACY_DATA_DIR_NAMES = ("CapsWriterOffline",)
 
 
+def _user_data_root() -> Path:
+    """Return the per-user data root for the current platform."""
+    if sys.platform == "win32":
+        return Path(os.environ["LOCALAPPDATA"])
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+
+
 def _adopt_data_dir(legacy, target):
     """Move the pre-rename data directory, falling back to a plain copy."""
     try:
@@ -33,7 +42,7 @@ def data_directory(app_dir=APP_DIR):
         return Path(override).resolve()
     if not (app_dir / "installed.flag").is_file():
         return app_dir
-    local_app_data = Path(os.environ["LOCALAPPDATA"])
+    local_app_data = _user_data_root()
     target = local_app_data / DATA_DIR_NAME
     if target.exists():
         return target

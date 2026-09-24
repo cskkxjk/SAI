@@ -161,7 +161,7 @@ class Launcher(tk.Tk):
             "paste": tk.BooleanVar(value=False),
             "audio_device": tk.StringVar(value=DEFAULT_MIC),
             "keep_microphone_open": tk.BooleanVar(value=False),
-            "auto_check_update": tk.BooleanVar(value=True),
+            "auto_check_update": tk.BooleanVar(value=(sys.platform != "darwin")),
             "close_behavior": tk.StringVar(value=CLOSE_CHOICES["ask"]),
             "asr_api_base_url": tk.StringVar(value="https://api.openai.com/v1"),
             "asr_api_model": tk.StringVar(value="whisper-1"),
@@ -1062,6 +1062,9 @@ class Launcher(tk.Tk):
 
     def _auto_check_update(self):
         """启动后的自动检查；受“自动检查更新”开关和 24 小时间隔限制"""
+        # macOS 分支的更新包与上游发布说明均面向 Windows，自动检查无意义
+        if sys.platform == "darwin":
+            return
         if not self.vars["auto_check_update"].get():
             return
         if not update_checker.should_check(self.update_state):
@@ -1312,7 +1315,12 @@ class Launcher(tk.Tk):
                 f"安装包已保存到：\n{installer}\n\n"
                 "当前是便携版或源码运行，不会自动安装；"
                 "可手动运行安装包完成升级。", parent=dialog)
-            os.startfile(str(Path(installer).parent))
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(Path(installer).parent)])
+            elif os.name == "nt":
+                os.startfile(str(Path(installer).parent))
+            else:
+                subprocess.Popen(["xdg-open", str(Path(installer).parent)])
             return
         if not messagebox.askokcancel(
                 "安装更新",
@@ -1472,6 +1480,7 @@ class Launcher(tk.Tk):
         if not self._save(quiet=True):
             return
         self._stop_processes()
+        self._purge_stale_server()
         log_dir = CONFIG.parent / "logs"
         (log_dir / "asr-error.json").unlink(missing_ok=True)
         # 上次进程被强杀时留下的就绪/录音标记
@@ -1669,6 +1678,38 @@ class Launcher(tk.Tk):
         dialog.grab_set()
         text.focus_set()
 
+    def _purge_stale_server(self):
+        """清理上一实例崩溃后残留、仍占用端口的 SAI 服务端进程。"""
+        if os.name == "nt":
+            return
+        try:
+            from config_server import ServerConfig
+            port = int(ServerConfig.port)
+        except Exception:
+            return
+        try:
+            result = subprocess.run(
+                ["lsof", "-nP", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+                capture_output=True, text=True, timeout=5)
+        except Exception:
+            return
+        for token in result.stdout.split():
+            try:
+                pid = int(token)
+            except ValueError:
+                continue
+            try:
+                command = subprocess.run(
+                    ["ps", "-o", "command=", "-p", str(pid)],
+                    capture_output=True, text=True, timeout=5).stdout
+            except Exception:
+                continue
+            if "sai.py" in command or "start_server.py" in command:
+                try:
+                    os.kill(pid, 15)
+                except OSError:
+                    pass
+
     def _stop_processes(self):
         if self.monitor is not None:
             self.after_cancel(self.monitor)
@@ -1811,6 +1852,9 @@ class Launcher(tk.Tk):
         self.tray_icon = None
         self.tray_images = {}
         self.tray_recording = False
+        if sys.platform == "darwin":
+            self._start_mac_tray()
+            return
         try:
             import pystray
             from PIL import Image
@@ -1836,9 +1880,69 @@ class Launcher(tk.Tk):
         except Exception as exc:
             self.status.set(f"托盘不可用：{exc}")
 
+    def _start_mac_tray(self):
+        """macOS 原生菜单栏状态项（在主线程创建，与 Tk 主循环共存）。
+
+        重要：AppKit 菜单回调里绝不能调用 Tk（after/destroy/deiconify 等）——
+        那会在 PyObjC 进入 Python 时破坏线程状态，随后 Tcl 触发 after 回调时
+        在 PyEval_RestoreThread 崩溃。菜单回调只把动作放进队列，由 Tk 侧
+        自己调度的轮询器执行。
+        """
+        try:
+            from PIL import Image
+            from core.ui.macos_tray import MacTray
+
+            image = Image.open(ROOT / "assets" / "icon.png")
+            try:
+                recording_image = Image.open(ROOT / "assets" / "icon-recording.png")
+            except (OSError, ValueError):
+                recording_image = image
+            self.tray_images = {False: image, True: recording_image}
+
+            if not hasattr(self, "_tray_queue"):
+                self._tray_queue = queue.Queue()
+                # 从 Tk 自身上下文调度轮询，避免线程状态问题
+                self.after(150, self._poll_tray_queue)
+
+            self.tray_icon = MacTray(str(ROOT / "assets" / "icon.png"), APP_TITLE, [
+                ("打开配置", lambda: self._tray_queue.put("config")),
+                ("打开数据目录", lambda: self._tray_queue.put("dir")),
+                ("退出", lambda: self._tray_queue.put("quit")),
+            ])
+        except Exception as exc:
+            self.status.set(f"托盘不可用：{exc}")
+
+    def _poll_tray_queue(self):
+        """在 Tk 上下文中执行菜单动作（由 AppKit 回调入队）。"""
+        try:
+            while True:
+                action = self._tray_queue.get_nowait()
+                if action == "config":
+                    self._show()
+                elif action == "dir":
+                    subprocess.Popen(["open", str(CONFIG.parent)])
+                elif action == "quit":
+                    self._close()
+                    return
+        except queue.Empty:
+            pass
+        except tk.TclError:
+            return
+        try:
+            self.after(150, self._poll_tray_queue)
+        except tk.TclError:
+            pass
+
     def _show(self):
         self.deiconify()
         self.lift()
+        # macOS 上后台进程不容易抢到焦点：短暂置顶一次再取消
+        if sys.platform == "darwin":
+            try:
+                self.attributes("-topmost", True)
+                self.after(200, lambda: self.attributes("-topmost", False))
+            except tk.TclError:
+                pass
         self.focus_force()
 
 

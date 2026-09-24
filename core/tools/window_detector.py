@@ -4,6 +4,11 @@
 检测当前前台活动的应用程序信息，用于兼容性配置
 """
 import platform
+import time
+
+# 前台窗口信息短缓存：一次识别流程里会被多处调用，避免重复取窗口。
+_ACTIVE_WINDOW_CACHE = {"time": 0.0, "info": {}}
+_ACTIVE_WINDOW_TTL = 0.5
 
 
 def get_active_window_info() -> dict:
@@ -17,16 +22,26 @@ def get_active_window_info() -> dict:
         - process_name: 进程名
         - app_name: 应用名称（推测）
     """
+    now = time.time()
+    cache = _ACTIVE_WINDOW_CACHE
+    if cache["info"] and now - cache["time"] < _ACTIVE_WINDOW_TTL:
+        return cache["info"]
+
     system = platform.system()
 
     if system == 'Windows':
-        return _get_windows_window_info()
+        info = _get_windows_window_info()
     elif system == 'Darwin':  # macOS
-        return _get_macos_window_info()
+        info = _get_macos_window_info()
     elif system == 'Linux':
-        return _get_linux_window_info()
+        info = _get_linux_window_info()
     else:
-        return {}
+        info = {}
+
+    if info:
+        cache["time"] = now
+        cache["info"] = info
+    return info
 
 
 def _get_windows_window_info() -> dict:
@@ -69,36 +84,61 @@ def _get_windows_window_info() -> dict:
 
 
 def _get_macos_window_info() -> dict:
-    """macOS 平台窗口检测"""
+    """macOS 平台窗口检测（NSWorkspace 原生 API，毫秒级）。
+
+    旧实现用 osascript 调 System Events，单次约 0.2s，一次识别会调用多次，
+    导致约 1s 的额外延迟。这里改用 NSWorkspace + CGWindowList，无需 AppleScript。
+    """
+    try:
+        from AppKit import NSWorkspace
+    except ImportError:
+        return _get_macos_window_info_osascript()
+
+    try:
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is None:
+            return {}
+        app_name = app.localizedName() or ""
+        pid = app.processIdentifier()
+
+        # 窗口标题：优先用 CGWindowList（无屏幕录制权限时标题可能为空，不影响流程）
+        title = ""
+        try:
+            from Quartz import (
+                CGWindowListCopyWindowInfo,
+                kCGWindowListOptionOnScreenOnly,
+                kCGNullWindowID,
+            )
+            for window in CGWindowListCopyWindowInfo(
+                    kCGWindowListOptionOnScreenOnly, kCGNullWindowID) or []:
+                if (window.get("kCGWindowOwnerPID") == pid
+                        and window.get("kCGWindowLayer", 1) == 0):
+                    title = window.get("kCGWindowName", "") or ""
+                    break
+        except Exception:
+            pass
+
+        return {
+            'title': title,
+            'class_name': '',
+            'process_name': app_name,
+            'app_name': app_name,
+        }
+    except Exception:
+        return _get_macos_window_info_osascript()
+
+
+def _get_macos_window_info_osascript() -> dict:
+    """回退方案：用 AppleScript 获取前台窗口信息（较慢）。"""
     try:
         import subprocess
-        from plistlib import loads
 
         # 使用 AppleScript 获取前台窗口信息
         script = '''
         tell application "System Events"
             set frontApp to name of first application process whose frontmost is true
-            if frontApp contains "Safari" then
-                tell application frontApp
-                    if (count of windows) > 0 then
-                        set windowTitle to name of front window
-                    else
-                        set windowTitle to ""
-                    end if
-                end tell
-            else if frontApp contains "Terminal" then
-                tell application frontApp
-                    if (count of windows) > 0 then
-                        set windowTitle to name of front window
-                    else
-                        set windowTitle to ""
-                    end if
-                end tell
-            else
-                set windowTitle to ""
-            end if
         end tell
-        return frontApp & "||" & windowTitle
+        return frontApp
         '''
 
         result = subprocess.run(
@@ -108,12 +148,9 @@ def _get_macos_window_info() -> dict:
         )
 
         if result.returncode == 0:
-            parts = result.stdout.strip().split('||')
-            app_name = parts[0] if len(parts) > 0 else ""
-            title = parts[1] if len(parts) > 1 else ""
-
+            app_name = result.stdout.strip()
             return {
-                'title': title,
+                'title': '',
                 'class_name': '',
                 'process_name': app_name,
                 'app_name': app_name

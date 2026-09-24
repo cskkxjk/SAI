@@ -1,9 +1,11 @@
 # coding: utf-8
 import asyncio
 import os
+import sys
 from pathlib import Path
 from . import logger
 from ..ui import TipsDisplay
+from ..state import console
 from config_client import ClientConfig as Config, __version__
 
 
@@ -40,6 +42,18 @@ class MicRunner:
 
         # 2. UI 提示
         TipsDisplay.show_mic_tips()
+
+        # 2.5 macOS 权限自检（缺失时快捷键/上屏不会生效）
+        if sys.platform == 'darwin':
+            from core.tools import macos_permissions
+            missing = macos_permissions.missing()
+            if missing:
+                logger.warning("缺少 macOS 权限，全局快捷键/模拟按键可能无效:\n%s",
+                               macos_permissions.describe())
+                console.print(
+                    "\n[bold yellow]检测到缺少 macOS 权限，请到「系统设置 > 隐私与安全性」授予：[/bold yellow]")
+                console.print(macos_permissions.describe())
+                console.print("[yellow]授权后请重启本程序。[/yellow]\n")
 
         # Only listen for shortcuts here; each recording owns its audio stream.
         self.app.shortcut.start()

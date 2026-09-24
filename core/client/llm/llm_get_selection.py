@@ -10,9 +10,9 @@ LLM 获取选中文字功能
 """
 import time
 import pyclip
-import keyboard
 from . import logger
 from .llm_clipboard import safe_paste
+from core.tools import key_send
 
 
 # 全局变量：记录每个角色最后一次使用的选中文字
@@ -41,8 +41,8 @@ def get_selected_text(role_config, state) -> str:
         # 保存当前剪贴板内容
         original_clipboard = safe_paste()
 
-        # 模拟 Ctrl+C 复制选中的文字
-        keyboard.press_and_release('ctrl+c')
+        # 模拟复制选中的文字（macOS 为 Cmd+C，其它平台为 Ctrl+C）
+        key_send.press_and_release('cmd+c' if key_send.IS_DARWIN else 'ctrl+c')
 
         # 等待复制操作完成
         time.sleep(0.1)

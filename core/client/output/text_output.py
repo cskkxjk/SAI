@@ -11,10 +11,10 @@ from typing import Optional
 import re
 import time
 
-import keyboard
 from pynput.keyboard import Controller as PynputController
 
 from config_client import ClientConfig as Config
+from core.tools import key_send
 from core.tools.asyncio_to_thread import to_thread
 from core.tools.window_detector import get_active_window_info
 from . import logger
@@ -48,7 +48,7 @@ def type_text(text: str) -> None:
 
     from core.client.clipboard import REMOTE_TYPE_INTERVAL, is_remote_target
     if not is_remote_target():
-        keyboard.write(text)
+        key_send.write(text)
         return
 
     if not text.isascii():

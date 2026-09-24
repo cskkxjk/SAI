@@ -18,7 +18,7 @@ from core.protocol import RecognitionMessage
 from core.client.output.text_output import TextOutput
 from core.client.clipboard import needs_paste_for_remote
 from core.tools.window_detector import get_active_window_info
-import keyboard
+from core.tools import key_send
 from . import logger
 
 from core.client.udp.udp_broadcaster import broadcast_output_udp
@@ -46,7 +46,7 @@ def _estimate_tokens(text: str) -> int:
 async def _auto_enter(delay: float) -> None:
     """延迟发送回车键"""
     await asyncio.sleep(delay)
-    keyboard.press_and_release('enter')
+    key_send.press_and_release('enter')
     logger.debug(f"自动回车已发送 (延迟 {delay}s)")
 
 
@@ -145,14 +145,9 @@ class ResultProcessor:
         用于调试按键卡住问题。
         """
         try:
-            import keyboard
-            
             # 获取所有当前按下的键
-            pressed_keys = keyboard._pressed_events
-            
-            # if pressed_keys:
-            key_names = list(pressed_keys.keys())
-            logger.debug(f"当前按下的键: {key_names}")
+            pressed_keys = key_send.pressed_keys()
+            logger.debug(f"当前按下的键: {pressed_keys}")
                 
         except Exception as e:
             logger.debug(f"检测按键状态失败: {e}")

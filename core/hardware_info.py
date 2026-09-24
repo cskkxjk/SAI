@@ -1,13 +1,49 @@
-"""Read-only Windows hardware inventory and conservative configuration advice."""
+"""Read-only hardware inventory and conservative configuration advice."""
 import ctypes
 import os
 import platform
+import subprocess
+import sys
 import uuid
 
 import psutil
 
 GIB = 1024 ** 3
 VENDORS = {0x10DE: "NVIDIA", 0x1002: "AMD", 0x8086: "Intel"}
+
+
+def _macos_cpu() -> str:
+    try:
+        out = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                             capture_output=True, text=True, timeout=3).stdout.strip()
+        if out:
+            return out
+    except Exception:
+        pass
+    return platform.processor() or platform.machine() or "未知"
+
+
+def _macos_gpus() -> list:
+    """通过 system_profiler 读取显卡型号。"""
+    try:
+        out = subprocess.run(["system_profiler", "-json", "SPDisplaysDataType"],
+                             capture_output=True, text=True, timeout=20).stdout
+        import json
+        displays = json.loads(out).get("SPDisplaysDataType", []) or []
+    except Exception:
+        return []
+    gpus = []
+    for item in displays:
+        name = (item.get("sppci_model") or item.get("_name")
+                or item.get("spdisplays_chipset_model") or "GPU")
+        vram = item.get("spdisplays_vram") or item.get("spdisplays_vram_shared") or ""
+        gpus.append({
+            "name": name, "vendor": "Apple" if "Apple" in name else "其他",
+            "vendor_id": -1, "dedicated_bytes": 0, "shared_bytes": 0,
+            "vram_text": vram,
+        })
+    return gpus
+
 
 
 def windows_adapters():
@@ -90,6 +126,14 @@ def merge_duplicate_gpus(adapters):
 
 def recommend(info):
     """Heuristics, not benchmarks or claims about current GPU utilization."""
+    if platform.system() == "Darwin":
+        return {
+            "settings": dict(model_type="paraformer", qwen_quantization="q5_k",
+                             onnx_provider="CPU", llm_use_gpu=False),
+            "reason": "macOS 当前使用离线 ONNX 模型（Paraformer），走 CPU 推理；"
+                      "GGUF 引擎暂未在 macOS 构建，ONNX 运行库后端为 CoreML/CPU。",
+            "gpu": info["gpus"][0]["name"] if info.get("gpus") else None,
+        }
     settings = dict(model_type="sensevoice", qwen_quantization="q5_k",
                     onnx_provider="CPU", llm_use_gpu=False)
     gpu = max((g for g in info["gpus"] if g["vendor_id"] in VENDORS),
@@ -142,7 +186,14 @@ def detect_hardware():
         except OSError:
             pass
     else:
-        info["gpu_error"] = "此检测页目前仅支持 Windows DXGI"
+        if sys.platform == "darwin":
+            info["cpu"] = _macos_cpu()
+            try:
+                info["gpus"] = _macos_gpus()
+            except Exception as exc:
+                info["gpu_error"] = str(exc)
+        else:
+            info["gpu_error"] = "此检测页目前仅支持 Windows DXGI 与 macOS"
     try:
         import onnxruntime
         info["onnx_providers"] = onnxruntime.get_available_providers()
@@ -160,22 +211,27 @@ def format_hardware(info):
         "",
     ]
     for index, gpu in enumerate(info["gpus"], 1):
-        lines.extend([
-            f"显卡 {index}：{gpu['name']}（{gpu['vendor']}）",
-            f"  专用显存：{gpu['dedicated_bytes'] / GIB:.1f} GiB",
-            f"  共享内存上限：{gpu['shared_bytes'] / GIB:.1f} GiB（不是空闲显存）",
-        ])
+        lines.append(f"显卡 {index}：{gpu['name']}（{gpu['vendor']}）")
+        if gpu.get("dedicated_bytes"):
+            lines.extend([
+                f"  专用显存：{gpu['dedicated_bytes'] / GIB:.1f} GiB",
+                f"  共享内存上限：{gpu['shared_bytes'] / GIB:.1f} GiB（不是空闲显存）",
+            ])
+        elif gpu.get("vram_text"):
+            lines.append(f"  显存：{gpu['vram_text']}")
     if info["gpu_error"]:
         lines.append(f"显卡检测失败：{info['gpu_error']}")
     elif not info["gpus"]:
         lines.append("未检测到硬件显卡")
+    lines.append("")
+    if os.name == "nt":
+        lines.append("Vulkan 驱动入口：" +
+                     ("已发现，尚未验证模型推理" if info["vulkan_loader"] else "未发现"))
     lines.extend([
-        "",
-        "Vulkan 驱动入口：" + ("已发现，尚未验证模型推理" if info["vulkan_loader"] else "未发现"),
         "ONNX 运行库后端：" + ", ".join(info["onnx_providers"]),
         "",
         "建议：" + info["recommendation"]["reason"],
         "以上为容量建议，不是速度测试；未检测 GPU 空闲率或当前剩余显存。",
-        "多显卡时建议参考显存较大的设备，实际推理设备以启动日志为准。",
+        "实际推理设备以启动日志为准。",
     ])
     return "\n".join(lines)

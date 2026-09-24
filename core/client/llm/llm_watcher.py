@@ -203,11 +203,11 @@ class LLMFileWatcher(FileSystemEventHandler):
 
     def start(self):
         """启动监控"""
-        # 监控 LLM 目录
+        # 只监控 LLM 目录。base_dir（仓库根）已由热词管理器监视，
+        # 在 macOS 上对同一路径重复 schedule 会触发 FSEvents
+        # "already scheduled" 错误并杀死监听线程。
         self.observer.schedule(self, str(self.llm_dir), recursive=False)
-        # 同时也监控 Base 目录（为了 hot files），non-recursive
-        self.observer.schedule(self, str(self.base_dir), recursive=False)
-        
+
         self.observer.start()
         self._is_started = True
         logger.info("LLM 文件监控已启动")

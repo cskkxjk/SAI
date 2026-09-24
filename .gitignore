@@ -34,6 +34,7 @@ MANIFEST
 !build-gui.spec
 !build-client.spec
 !build.spec
+!build-macos.spec
 *.zip
 
 # 安装日志

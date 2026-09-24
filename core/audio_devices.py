@@ -8,6 +8,11 @@ HOST_PRIORITY = {
     "Windows DirectSound": 1,
     "MME": 2,
     "Windows WDM-KS": 3,
+    # macOS / Linux PortAudio host APIs
+    "Core Audio": 0,
+    "ALSA": 0,
+    "PulseAudio": 1,
+    "JACK": 2,
 }
 
 

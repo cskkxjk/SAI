@@ -9,7 +9,8 @@ dependencies = [
     "sherpa-onnx",
     "numpy",
     "gguf",
-    "onnxruntime-directml",
+    "onnxruntime-directml; sys_platform == 'win32'",
+    "onnxruntime; sys_platform != 'win32'",
     "sentencepiece",
     "soundfile",
     "numba",
@@ -30,7 +31,7 @@ dependencies = [
     "tkhtmlview",
 
     # 输入与硬件
-    "keyboard",
+    "keyboard; sys_platform != 'darwin'",
     "pynput",
     "pyclip",
     "sounddevice",
@@ -44,12 +45,8 @@ dependencies = [
     "rapidfuzz",
     "pydub",
 
-    # 对齐器分词（日/韩）
-    "nagisa",
-    "soynlp",
-
     # Windows
-    "pywin32",
+    "pywin32; sys_platform == 'win32'",
     "psutil",
 ]
 

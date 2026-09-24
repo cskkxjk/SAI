@@ -184,27 +184,31 @@ async def paste_text(text: str, restore_clipboard: bool = True):
         logger.warning("剪贴板写入未生效，粘贴结果可能不是本次识别内容")
     logger.debug(f"已复制文本到剪贴板，长度: {len(text)}")
 
+    # 远程桌面等慢目标需要时间把剪贴板同步到对端，先等一会儿再发粘贴快捷键。
+    # 本地目标（factor==1）在 macOS 上剪贴板是同步写入且已校验，几乎无需等待。
     factor = _target_delay_factor()
-
-    # 远程桌面等慢目标需要时间把剪贴板同步到对端，先等一会儿再发 Ctrl+V
     settle = _config_number('paste_settle_delay', 0.12) * factor
     if factor > 1.0:
         settle = max(settle, SLOW_TARGET_SETTLE_DELAY)
+    elif platform.system() == 'Darwin':
+        settle = min(settle, 0.02)
     if settle > 0:
         await asyncio.sleep(settle)
 
-    # 粘贴结果（使用 pynput 模拟 Ctrl+V）
+    # 粘贴结果（使用 pynput 模拟粘贴快捷键）
     controller = keyboard.Controller()
     if platform.system() == 'Darwin':
         # macOS: Command+V
         with controller.pressed(keyboard.Key.cmd):
             controller.tap('v')
+        paste_combo = 'Cmd+V'
     else:
         # Windows/Linux: Ctrl+V
         with controller.pressed(keyboard.Key.ctrl):
             controller.tap('v')
+        paste_combo = 'Ctrl+V'
 
-    logger.debug("已发送粘贴命令 (Ctrl+V)")
+    logger.debug(f"已发送粘贴命令 ({paste_combo})")
 
     # 还原剪贴板：要等目标把数据读走之后再恢复，否则会粘到旧内容
     if restore_clipboard and original:
