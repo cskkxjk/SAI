@@ -14,6 +14,7 @@ import numpy as np
 from config_client import ClientConfig as Config
 from core import get_logger
 from core.client.voice_phrase.matcher import (
+    DEFAULT_THRESHOLD,
     PhraseMatch,
     PhraseTemplate,
     match_phrases,
@@ -68,7 +69,8 @@ class VoicePhraseManager:
         templates = self.reload_if_changed()
         if not templates:
             return []
-        threshold = float(getattr(Config, "voice_phrase_threshold", 0.45) or 0.45)
+        threshold = float(getattr(Config, "voice_phrase_threshold", DEFAULT_THRESHOLD)
+                          or DEFAULT_THRESHOLD)
         return match_phrases(
             np.asarray(audio, dtype=np.float32),
             templates,

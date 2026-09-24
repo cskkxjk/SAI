@@ -381,3 +381,29 @@ class AudioStreamManager:
         if not (self.keep_open or self.state.recording):
             return None
         return self._start()
+
+    def suspend_for_capture(self) -> None:
+        """语音短语录制期间让出麦克风：关闭常开的输入流。
+
+        蓝牙耳机等设备同一时刻只允许一条输入流，客户端常开的流会让
+        启动器的短语录制拿不到音频（或反过来把这条流踢掉）。
+        """
+        with self._lock:
+            if self._shutdown:
+                return
+            self._worker.submit(self._suspend_for_capture).result()
+
+    def _suspend_for_capture(self) -> None:
+        if not self.keep_open or self.state.recording:
+            return
+        if self.state.stream is None:
+            return
+        logger.info("语音短语录制中，暂时让出麦克风")
+        self._close()
+
+    def resume_after_capture(self) -> None:
+        """语音短语录制结束：恢复常开的输入流。"""
+        with self._lock:
+            if self._shutdown or not self.keep_open:
+                return
+            self._worker.submit(self._prepare).result()

@@ -96,3 +96,18 @@ class KeyCapture:
             return None
         self.down.discard(name)
         return join_chord(self.chord)
+
+
+def darwin_suppress_intercept(owner):
+    """macOS 事件拦截回调：owner.darwin_suppress 为真时屏蔽当前事件。
+
+    pynput 在 darwin 上先同步调用监听回调，再调用拦截器，
+    因此回调里打的标记正好对应本次事件（返回 None 表示系统级屏蔽）。
+    """
+    def intercept(_event_type, event):
+        if getattr(owner, "darwin_suppress", False):
+            owner.darwin_suppress = False
+            return None
+        return event
+
+    return intercept

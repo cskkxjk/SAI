@@ -5,15 +5,23 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from core.desktop_widgets import (BORDER, CARD_BG, DIVIDER, PRIMARY, Card,
                                   PillButton, TEXT, ui_font)
+from core.desktop_voice_phrases import VoicePhrasePanel, recording_shortcut
+from core.client.voice_phrase.matcher import (
+    DEFAULT_THRESHOLD,
+    best_candidates,
+    match_phrases,
+)
 from core.hotword_rules import parse_rules, literal_rule, encode_literal
+from core.shortcut_keys import shortcut_label
 
 
 class HotwordEditor(ttk.Frame):
     """Embeddable page that edits hot.txt and hot-rule.txt in place."""
 
-    def __init__(self, parent, root):
+    def __init__(self, parent, root, voice_store=None, client=None):
         super().__init__(parent, style="Page.TFrame")
         self.root = Path(root)
+        self.client = client
         self.originals = {}
         self.editors = {}
         self.names = ("hot.txt", "hot-rule.txt")
@@ -51,8 +59,12 @@ class HotwordEditor(ttk.Frame):
             editor.insert("1.0", content or "")
             editor.edit_reset()
             self.editors[name] = editor
-        from core.desktop_voice_phrases import VoicePhrasePanel
-        self.voice_panel = VoicePhrasePanel(self.tabs)
+        self.voice_panel = VoicePhrasePanel(
+            self.tabs, store=voice_store,
+            ready=getattr(client, "recognition_ready", None),
+            loading=getattr(client, "recognition_loading", None),
+            on_recording=getattr(client, "set_phrase_recording", None),
+            on_mode_change=self._sync_voice_test_ui)
         self.tabs.add(self.voice_panel, text="语音短语")
         self._refresh_table()
         self.tabs.bind("<<NotebookTabChanged>>", self._tab_changed)
@@ -78,11 +90,19 @@ class HotwordEditor(ttk.Frame):
             row=0, column=1, sticky="ew", pady=(0, 7))
         PillButton(preview, "测试替换", command=self._preview,
                    background=CARD_BG).grid(row=0, column=2, padx=(10, 0))
+        self.voice_test_button = PillButton(preview, "语音测试",
+                                            command=self._toggle_voice_test,
+                                            background=CARD_BG)
+        self.voice_test_button.grid(row=0, column=3, padx=(8, 0))
         ttk.Label(preview, text="替换结果", style="Field.TLabel").grid(
             row=1, column=0, sticky="w", padx=(0, 12))
         self.result = tk.StringVar()
         ttk.Entry(preview, textvariable=self.result, state="readonly").grid(
-            row=1, column=1, columnspan=2, sticky="ew")
+            row=1, column=1, columnspan=3, sticky="ew")
+        self.voice_test_status = tk.StringVar()
+        ttk.Label(preview, textvariable=self.voice_test_status, style="Hint.TLabel",
+                  justify="left").grid(row=2, column=0, columnspan=4, sticky="w",
+                                       pady=(7, 0))
 
     def _build_simple(self):
         frame = ttk.Frame(self.tabs, padding=10, style="Card.TFrame")
@@ -143,7 +163,39 @@ class HotwordEditor(ttk.Frame):
     def _tab_changed(self, _=None):
         self._refresh_table()
         try:
+            self.voice_panel.set_active(
+                self.tabs.index(self.tabs.select()) == self.tabs.index(self.voice_panel))
+        except Exception:
+            pass
+        try:
             self.voice_panel.refresh()
+        except Exception:
+            pass
+
+    def notify_client_ready(self):
+        """识别模型就绪：继续语音短语页等待中的录制模式。"""
+        try:
+            self.voice_panel.notify_client_ready()
+        except Exception:
+            pass
+
+    def notify_client_stopped(self):
+        """识别客户端停止：退出语音短语录制模式。"""
+        try:
+            self.voice_panel.notify_client_stopped()
+        except Exception:
+            pass
+
+    def set_visible(self, visible):
+        """主界面切走本页时退出语音短语录制模式与语音测试。"""
+        if visible:
+            return
+        try:
+            self._cancel_voice_test(silent=True)
+        except Exception:
+            pass
+        try:
+            self.voice_panel.cancel_capture(silent=True)
         except Exception:
             pass
 
@@ -303,7 +355,9 @@ class HotwordEditor(ttk.Frame):
             self._corrector_source = content
         return self._corrector
 
-    def _preview(self):
+    def _preview(self, cancel_test=True):
+        if cancel_test and self._voice_test_active():
+            self._cancel_voice_test(silent=True)
         try:
             text = self._hotword_corrector().correct(self.sample.get()).text
         except Exception as exc:
@@ -318,3 +372,86 @@ class HotwordEditor(ttk.Frame):
             messagebox.showerror("规则无效", str(exc), parent=self)
             return
         self.result.set(text)
+
+    # ------------------------------------------------------------- 语音测试
+    def _voice_test_active(self):
+        return (self.voice_panel.mode_active
+                and self.voice_panel.capture_owner == "test")
+
+    def _sync_voice_test_ui(self):
+        """录制模式变化时同步「语音测试」按钮（与「开始录制」共用同一模式）。"""
+        if "voice_test_button" not in self.__dict__:
+            return
+        self.voice_test_button.configure(
+            text="取消测试" if self._voice_test_active() else "语音测试")
+
+    def _toggle_voice_test(self):
+        if self._voice_test_active():
+            self._cancel_voice_test()
+        else:
+            self._begin_voice_test()
+
+    @staticmethod
+    def _sample_summary(templates):
+        """测试状态里显示短语数与样本数（同文字多份样本会合并成一个词条）。"""
+        phrases = len({tpl.text for tpl in templates})
+        return f"{phrases} 个短语 / {len(templates)} 份样本"
+
+    def _begin_voice_test(self):
+        """按录音键录一段话，与已录入的语音短语匹配后走替换流程。
+
+        与「开始录制」走同一条路：确认模型就绪、暂停听写、录音键采集，
+        只是录完后直接匹配对比，而不是等待标注保存。
+        """
+        try:
+            templates = self.voice_panel.store.templates()
+        except Exception as exc:
+            self.voice_test_status.set(f"读取语音短语失败：{exc}")
+            return
+        if not templates:
+            messagebox.showinfo("还没有语音短语",
+                                "请先在「语音短语」页录制短语，再回来测试。", parent=self)
+            return
+        shortcut = recording_shortcut()
+        label = shortcut_label(shortcut.get("key", ""))
+        self.voice_test_status.set("正在准备录音设备…")
+        self.voice_panel.begin_capture(
+            owner="test", status=self.voice_test_status.set,
+            captured=self._finish_voice_test,
+            ready_text=f"按住 {label} 说短语，松开后匹配（{self._sample_summary(templates)}）")
+        self._sync_voice_test_ui()
+
+    def _cancel_voice_test(self, silent=False):
+        self.voice_panel.cancel_capture(silent=True)
+        self._sync_voice_test_ui()
+        if not silent:
+            self.voice_test_status.set("")
+
+    def _finish_voice_test(self, audio):
+        try:
+            from config_client import ClientConfig as Config
+
+            templates = self.voice_panel.store.templates()
+            threshold = float(getattr(Config, "voice_phrase_threshold", DEFAULT_THRESHOLD)
+                              or DEFAULT_THRESHOLD)
+            matches = match_phrases(audio, templates, threshold=threshold)
+            closest = None if matches else best_candidates(audio, templates)
+        except Exception as exc:
+            self.voice_test_status.set(f"匹配失败：{exc}")
+            return
+        if not matches:
+            if closest:
+                top = closest[0]
+                self.voice_test_status.set(
+                    f"未命中：最接近「{top.text}」{top.score:.2f}，阈值 {threshold:.2f}"
+                    f"（{self._sample_summary(templates)}，可再次按住录音键重试）")
+            else:
+                self.voice_test_status.set(
+                    f"未命中（{self._sample_summary(templates)}，阈值 {threshold:.2f}）")
+            self.result.set("未命中语音短语")
+            return
+        matches.sort(key=lambda item: item.score)
+        self.sample.set(matches[0].text)
+        summary = "、".join(f"「{item.text}」（{item.score:.2f}）" for item in matches)
+        self.voice_test_status.set(f"命中 {summary}，阈值 {threshold:.2f}，已填入测试原文")
+        self._preview(cancel_test=False)

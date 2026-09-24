@@ -11,14 +11,16 @@ from config_client import ClientConfig as Config
 from core.client.voice_phrase.features import FEATURE_VERSION, N_CEPS, SAMPLE_RATE, mfcc
 from core.client.voice_phrase.manager import VoicePhraseManager
 from core.client.voice_phrase.matcher import (
+    DEFAULT_THRESHOLD,
     PhraseMatch,
     PhraseTemplate,
+    best_candidates,
     dtw_distance,
     match_phrases,
     segment_by_energy,
 )
 from core.client.voice_phrase.replace import apply_replacements
-from core.client.voice_phrase.storage import VoicePhraseStore
+from core.client.voice_phrase.storage import MAX_SAMPLES, VoicePhraseStore
 
 
 def _chirp(f0, f1, duration, sr=SAMPLE_RATE):
@@ -44,10 +46,17 @@ def _template(text, audio, phrase_id="p1", sample_index=1):
 class FeatureTests(unittest.TestCase):
     def test_mfcc_shape_and_short_audio(self):
         feature = mfcc(_chirp(300, 900, 1.0))
-        self.assertEqual(feature.shape[1], 2 * (N_CEPS - 1))
+        self.assertEqual(feature.shape[1], N_CEPS - 1)
         self.assertGreater(feature.shape[0], 50)
         self.assertTrue(np.isfinite(feature).all())
         self.assertEqual(mfcc(_chirp(300, 900, 0.005)).shape[0], 0)
+
+    def test_mfcc_applies_cmn(self):
+        """逐句均值归一化：整体增益/信道偏移被抵消，各维时间均值为 0。"""
+        feature = mfcc(_chirp(300, 900, 1.0))
+        self.assertLess(float(np.abs(feature.mean(axis=0)).max()), 1e-4)
+        quiet = mfcc(_chirp(300, 900, 1.0) * 0.2)
+        self.assertLess(float(np.abs(feature - quiet).max()), 1e-3)
 
 
 class DtwTests(unittest.TestCase):
@@ -79,7 +88,7 @@ class MatchTests(unittest.TestCase):
         matches = match_phrases(audio, [_template("打开帮助文档", phrase)])
         self.assertEqual(len(matches), 1)
         self.assertAlmostEqual(matches[0].start, 0.6, delta=0.2)
-        self.assertLess(matches[0].score, 0.45)
+        self.assertLess(matches[0].score, DEFAULT_THRESHOLD / 2)
         self.assertEqual(matches[0].text, "打开帮助文档")
 
     def test_match_found_with_explicit_spans(self):
@@ -103,6 +112,28 @@ class MatchTests(unittest.TestCase):
             _template("方案二", phrase, phrase_id="p2"),
         ]
         self.assertEqual(match_phrases(audio, templates), [])
+
+    def test_identical_templates_with_the_same_text_keep_one(self):
+        phrase = _chirp(300, 900, 1.0)
+        audio = np.concatenate([_silence(0.5), phrase, _silence(0.3)])
+        templates = [
+            _template("打开帮助文档", phrase, phrase_id="p1", sample_index=1),
+            _template("打开帮助文档", phrase, phrase_id="p2", sample_index=1),
+        ]
+        matches = match_phrases(audio, templates)
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].text, "打开帮助文档")
+        self.assertEqual(len(best_candidates(audio, templates)), 1)
+
+    def test_best_candidates_reports_the_closest_above_threshold(self):
+        phrase = _chirp(300, 900, 1.0)
+        audio = np.concatenate([_silence(0.5), _chirp(1500, 3000, 1.0), _silence(0.3)])
+        templates = [_template("打开帮助文档", phrase)]
+        self.assertEqual(match_phrases(audio, templates, threshold=0.05), [])
+        best = best_candidates(audio, templates)
+        self.assertEqual([item.text for item in best], ["打开帮助文档"])
+        self.assertGreater(best[0].score, 0.05)
+        self.assertTrue(np.isfinite(best[0].score))
 
 
 class StoreTests(unittest.TestCase):
@@ -137,7 +168,7 @@ class StoreTests(unittest.TestCase):
             np.savez_compressed(
                 store._feature_path(name),
                 version=FEATURE_VERSION + 99,
-                feature=np.zeros((2, 2 * (N_CEPS - 1)), dtype=np.float32),
+                feature=np.zeros((2, N_CEPS - 1), dtype=np.float32),
             )
             templates = store.templates()
             self.assertEqual(len(templates), 1)
@@ -150,6 +181,57 @@ class StoreTests(unittest.TestCase):
                 store.add("", [np.zeros(16000, dtype=np.float32)])
             with self.assertRaises(ValueError):
                 store.add("文字", [])
+
+    def test_add_merges_samples_for_the_same_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = VoicePhraseStore(Path(tmp) / "voice-phrases")
+            phrase = _chirp(300, 900, 0.9)
+            first = store.add("打开帮助文档", [phrase])
+            second = store.add("  打开帮助文档 ", [phrase])
+            self.assertEqual(second["id"], first["id"])
+            self.assertEqual(len(store.load()), 1)
+            self.assertEqual([Path(name).name for name in second["samples"]],
+                             [f"{first['id']}.1.wav", f"{first['id']}.2.wav"])
+            self.assertEqual(len(store.templates()), 2)
+
+    def test_add_stops_merging_at_max_samples(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = VoicePhraseStore(Path(tmp) / "voice-phrases")
+            phrase = _chirp(300, 900, 0.9)
+            for _ in range(MAX_SAMPLES + 1):
+                store.add("打开帮助文档", [phrase])
+            items = store.load()
+            self.assertEqual(len(items), 2)
+            self.assertEqual(len(items[0]["samples"]), MAX_SAMPLES)
+            self.assertEqual(len(items[1]["samples"]), 1)
+            self.assertNotEqual(items[0]["id"], items[1]["id"])
+
+    def test_merge_duplicates_consolidates_existing_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = VoicePhraseStore(Path(tmp) / "voice-phrases")
+            phrase = _chirp(300, 900, 0.9)
+            first = store.add("打开帮助文档", [phrase], merge=False)
+            second = store.add("打开帮助文档", [phrase], merge=False)
+            store.add("另一个短语", [phrase], merge=False)
+            self.assertEqual(len(store.load()), 3)
+            self.assertEqual(store.merge_duplicates(), 1)
+            items = store.load()
+            self.assertEqual(len(items), 2)
+            self.assertEqual(items[0]["id"], first["id"])
+            self.assertEqual(items[0]["samples"],
+                             [first["samples"][0], second["samples"][0]])
+            self.assertTrue(store.templates())
+            self.assertEqual(store.merge_duplicates(), 0)
+
+    def test_merge_duplicates_keeps_groups_that_are_too_large(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = VoicePhraseStore(Path(tmp) / "voice-phrases")
+            phrase = _chirp(300, 900, 0.9)
+            for _ in range(MAX_SAMPLES + 1):
+                store.add("打开帮助文档", [phrase], merge=False)
+            self.assertEqual(len(store.load()), MAX_SAMPLES + 1)
+            self.assertEqual(store.merge_duplicates(), 0)
+            self.assertEqual(len(store.load()), MAX_SAMPLES + 1)
 
 
 class ReplaceTests(unittest.TestCase):
@@ -213,7 +295,7 @@ class ManagerTests(unittest.TestCase):
             manager = VoicePhraseManager(store=store)
             audio = np.concatenate([_silence(0.6), phrase, _silence(0.4)])
             with mock.patch.object(Config, "voice_phrase", True), mock.patch.object(
-                Config, "voice_phrase_threshold", 0.45
+                Config, "voice_phrase_threshold", DEFAULT_THRESHOLD
             ):
                 matches = manager.match(audio)
                 self.assertEqual(len(matches), 1)

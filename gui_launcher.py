@@ -178,6 +178,7 @@ class Launcher(tk.Tk):
         self.recording_files = {}
         self.tray_images = {}
         self.tray_recording = False
+        self.phrase_recording = False
         self.starting = False
         self.running = False
         self.monitor = None
@@ -451,6 +452,7 @@ class Launcher(tk.Tk):
         api = ScrollPage(container)
         hardware = ScrollPage(container)
         hotwords = ScrollPage(container)
+        self._hotword_shell = hotwords
         self.page_specs = (
             (home, "常规设置", "识别模型、录音与输出选项"),
             (api, "语音 API", "远程识别服务连接"),
@@ -525,6 +527,9 @@ class Launcher(tk.Tk):
 
     def _show_page(self, page, selected=None):
         page.tkraise()
+        hotword = getattr(self, "hotword_page", None)
+        if hotword is not None:
+            hotword.set_visible(page is getattr(self, "_hotword_shell", None))
         for button in self.nav_buttons:
             button.set_selected(button is selected)
         for target, title, subtitle in self.page_specs:
@@ -973,7 +978,7 @@ class Launcher(tk.Tk):
     def _build_hotword_page(self, body):
         from core.desktop_hotwords import HotwordEditor
         try:
-            self.hotword_page = HotwordEditor(body, CONFIG.parent)
+            self.hotword_page = HotwordEditor(body, CONFIG.parent, client=self)
         except (OSError, UnicodeError) as exc:
             self.hotword_page = None
             label = ttk.Label(body, text=f"无法打开热词文件：{exc}",
@@ -1839,11 +1844,12 @@ class Launcher(tk.Tk):
                 self.running = True
                 self.status.set(self._running_status_text())
                 self.start_button.configure(state="normal", text="保存并重启")
+                page = getattr(self, "hotword_page", None)
+                if page is not None:
+                    page.notify_client_ready()
                 # 启动完成后就不再需要标记文件
                 for ready in self.ready_files.values():
                     ready.unlink(missing_ok=True)
-                if self.tray_icon and self.tray_icon.visible:
-                    self.withdraw()
         self._refresh_recording_indicator()
         if self.processes:
             self.monitor = self.after(500, self._check_children)
@@ -1867,7 +1873,7 @@ class Launcher(tk.Tk):
         flag = self.recording_files.get("client")
         if self.tray_icon is None or not self.tray_images:
             return
-        recording = bool(flag and flag.exists())
+        recording = bool(flag and flag.exists()) or self.phrase_recording
         if recording == self.tray_recording:
             return
         self.tray_recording = recording
@@ -1876,6 +1882,22 @@ class Launcher(tk.Tk):
             self.tray_icon.title = f"{APP_TITLE} · 正在录音" if recording else APP_TITLE
         except Exception:
             pass
+
+    def recognition_ready(self):
+        """识别客户端（模型）是否已就绪，供语音短语录制判断。"""
+        return bool(self.running)
+
+    def recognition_loading(self):
+        """识别客户端是否正在启动/载入模型。"""
+        return bool(self.starting)
+
+    def set_phrase_recording(self, active):
+        """语音短语录制时也让托盘图标变色（与听写效果一致）。"""
+        active = bool(active)
+        if self.phrase_recording == active:
+            return
+        self.phrase_recording = active
+        self._refresh_recording_indicator()
 
     def _fail(self, reason):
         self._stop_processes()
@@ -2029,6 +2051,9 @@ class Launcher(tk.Tk):
             recording.unlink(missing_ok=True)
         self.recording_files.clear()
         self.starting = self.running = False
+        page = getattr(self, "hotword_page", None)
+        if page is not None:
+            page.notify_client_stopped()
         self._refresh_recording_indicator()
         self.status.set("已停止")
         if hasattr(self, "start_button"):
