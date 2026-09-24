@@ -31,6 +31,6 @@ TensorFlow
 Transformer
 
 # ====== 自定义短语示例 ======
-18200006666 | 我的手机号 | input my phone
-上海市浦东新区张江高科技园区 | input my address
+123-4567-8910 | 我的手机号 | input my phone
+xx省xx市xx区xxxx路xxx号 | 我的地址 | input my address
 hello@example.com | 我的邮箱 | input my email

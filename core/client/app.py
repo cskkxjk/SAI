@@ -24,6 +24,7 @@ from .manager import (
     MicRunner, FileRunner
 )
 from .audio.stream import AudioStreamManager
+from .audio.file_manager import cleanup_old_recordings
 from .shortcut.shortcut_manager import ShortcutManager
 from .shortcut.shortcut_config import Shortcut
 
@@ -115,6 +116,18 @@ class SaiClient:
         console.print('[green4]再见！')
 
 
+    def cleanup_recordings(self):
+        """
+        按配置的保留期清理过期录音文件（0 表示永久保留）
+        """
+        try:
+            removed = cleanup_old_recordings(self.base_dir, Config.audio_keep_days)
+        except Exception as exc:
+            logger.warning(f"清理过期录音时发生错误: {exc}")
+            return
+        if removed:
+            logger.info(f"已清理 {len(removed)} 个超过 {Config.audio_keep_days} 天的录音文件")
+
     def start(self):
         """
         启动客户端 (唯一入口)
@@ -124,6 +137,8 @@ class SaiClient:
 
         # 注册退出函数
         register_signal(self.stop)
+
+        self.cleanup_recordings()
 
         files = [Path(f) for f in sys.argv[1:] if os.path.exists(f)]
 

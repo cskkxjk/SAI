@@ -29,6 +29,62 @@ from . import logger
 # 音频文件句柄类型
 AudioWriter = Union[Popen, wave.Wave_write]
 
+# 录音归档目录下会被清理的文件后缀
+AUDIO_SUFFIXES = ('.mp3', '.wav')
+
+
+def audio_folder(root: Union[Path, str]) -> Path:
+    """
+    返回录音文件夹（最近一个 年/月/assets 目录，没有则返回数据目录）
+
+    Args:
+        root: 数据目录
+
+    Returns:
+        录音文件夹路径
+    """
+    base = Path(root)
+    folders = sorted(folder for folder in base.glob('????/??/assets')
+                     if folder.is_dir())
+    return folders[-1] if folders else base
+
+
+def cleanup_old_recordings(root: Union[Path, str], keep_days: Union[int, float],
+                           now: Optional[float] = None) -> list:
+    """
+    清理超过保留期的录音文件（只删音频，日记等其它文件不动）
+
+    Args:
+        root: 数据目录
+        keep_days: 保留最近多少天，0 或负数表示永久保留
+        now: 当前时间戳，默认取系统时间
+
+    Returns:
+        被删除的文件路径列表
+    """
+    try:
+        keep_days = float(keep_days)
+    except (TypeError, ValueError):
+        return []
+    if keep_days <= 0:
+        return []
+
+    base = Path(root)
+    deadline = (time.time() if now is None else float(now)) - keep_days * 86400
+    removed = []
+    for folder in sorted(folder for folder in base.glob('????/??/assets')
+                         if folder.is_dir()):
+        for file in sorted(folder.iterdir()):
+            if not file.is_file() or file.suffix.lower() not in AUDIO_SUFFIXES:
+                continue
+            try:
+                if file.stat().st_mtime < deadline:
+                    file.unlink()
+                    removed.append(file)
+            except OSError as exc:
+                logger.warning(f"清理录音失败: {file} ({exc})")
+    return removed
+
 
 class AudioFileManager:
     """

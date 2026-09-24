@@ -4,6 +4,7 @@
 参考 clash-verge-rev 的更新实现：
 - 只在远端版本更高时提示，相同或更旧一律忽略；
 - 检查结果按时间间隔缓存，避免每次启动都请求 GitHub；
+- 优先 GitHub API，被限流或失败时回退 releases.atom（不占 API 配额）；
 - 安装包下载后按发布资产的 SHA256 摘要校验；
 - 支持「跳过此版本」，只跳过被标记的那一个版本；
 - 安装由 GUI 调用 create_install_script() 生成批处理：
@@ -12,6 +13,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -19,6 +21,8 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
+from xml.etree import ElementTree
 
 import requests
 
@@ -27,12 +31,15 @@ from core.runtime_paths import DATA_DIR
 
 REPO = "cskkxjk/SAI"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
+ATOM_LATEST = f"https://github.com/{REPO}/releases.atom"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases"
 USER_AGENT = "SAI-Updater"
 CHECK_INTERVAL = 24 * 60 * 60  # 秒
+ATTEMPT_INTERVAL = 15 * 60  # 检查失败后多久可以再试
 REQUEST_TIMEOUT = (10, 30)
 DOWNLOAD_TIMEOUT = (15, 120)
 CHUNK_SIZE = 1024 * 1024
+ATOM_NS = "{http://www.w3.org/2005/Atom}"
 
 UPDATES_DIR = DATA_DIR / "updates"
 STATE_FILE = UPDATES_DIR / "state.json"
@@ -148,19 +155,105 @@ def parse_release(data, current_version):
     )
 
 
+def installer_name_for(version):
+    """按发布约定推导安装包文件名"""
+    return f"SAI-{version}-Setup.exe"
+
+
+def installer_url_for(tag, name):
+    """按发布约定推导安装包下载地址"""
+    return (f"{RELEASES_PAGE}/download/{quote(str(tag), safe='')}/"
+            f"{quote(str(name), safe='')}")
+
+
+def html_to_text(source):
+    """把 release 说明的 HTML 转成便于 Markdown 显示的纯文本"""
+    text = str(source or "")
+    text = re.sub(r"(?is)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?is)<li[^>]*>", "\n- ", text)
+    text = re.sub(r"(?is)<h[1-6][^>]*>", "\n### ", text)
+    text = re.sub(r"(?is)</(p|div|li|ul|ol|h[1-6]|tr|table|blockquote)>",
+                  "\n", text)
+    text = re.sub(r"(?is)<[^>]+>", "", text)
+    text = html.unescape(text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def parse_atom(xml_text, current_version):
+    """解析 releases.atom，取最新一条正式版；无更新返回 None。
+
+    Atom 不提供资产大小与摘要，按 SAI-<版本>-Setup.exe 的发布约定推导下载地址，
+    下载时跳过 SHA256 校验。
+    """
+    try:
+        root = ElementTree.fromstring(xml_text)
+    except (ElementTree.ParseError, TypeError, ValueError):
+        return None
+    for entry in root.findall(f"{ATOM_NS}entry"):
+        link = entry.find(f"{ATOM_NS}link")
+        page_url = str(link.get("href") or "") if link is not None else ""
+        tag = ""
+        if "/releases/tag/" in page_url:
+            tag = page_url.rsplit("/releases/tag/", 1)[-1]
+        if not tag:
+            identifier = str(entry.findtext(f"{ATOM_NS}id") or "")
+            tag = identifier.rsplit("/", 1)[-1] if "/" in identifier else identifier
+        tag = tag.strip()
+        version = normalize_version(tag)
+        # Atom 里可能混入预发布版本，带后缀的一律跳过
+        if not version or "-" in version or not is_newer(version, current_version):
+            continue
+        name = str(entry.findtext(f"{ATOM_NS}title") or tag).strip()
+        installer = installer_name_for(version)
+        return ReleaseInfo(
+            version=version,
+            tag=tag,
+            name=name,
+            notes=html_to_text(entry.findtext(f"{ATOM_NS}content") or ""),
+            page_url=page_url or RELEASES_PAGE,
+            installer_name=installer,
+            installer_url=installer_url_for(tag, installer),
+            published_at=str(entry.findtext(f"{ATOM_NS}updated") or "").strip(),
+        )
+    return None
+
+
 def fetch_latest_release(current_version, session=None, api_url=None,
-                         timeout=REQUEST_TIMEOUT):
-    """查询最新正式版；没有更新返回 None。SAI_UPDATE_API 可覆盖接口地址。"""
-    url = api_url or os.environ.get("SAI_UPDATE_API") or API_LATEST
+                         timeout=REQUEST_TIMEOUT, atom_url=None):
+    """查询最新正式版；没有更新返回 None。
+
+    优先 GitHub API（SAI_UPDATE_API 可覆盖），被限流（403）或网络异常时
+    回退 releases.atom（SAI_UPDATE_ATOM 可覆盖），两者都失败才报错。
+    """
     session = session or requests.Session()
     # GitHub 在部分网络环境下需要走系统代理
     session.trust_env = True
-    response = session.get(url, timeout=timeout, headers={
-        "Accept": "application/vnd.github+json",
-        "User-Agent": USER_AGENT,
-    })
-    response.raise_for_status()
-    return parse_release(response.json(), current_version)
+    url = api_url or os.environ.get("SAI_UPDATE_API") or API_LATEST
+    api_error = None
+    try:
+        response = session.get(url, timeout=timeout, headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": USER_AGENT,
+        })
+        response.raise_for_status()
+        return parse_release(response.json(), current_version)
+    except (requests.RequestException, ValueError, TypeError) as error:
+        api_error = error
+    feed = atom_url or os.environ.get("SAI_UPDATE_ATOM") or ATOM_LATEST
+    try:
+        response = session.get(feed, timeout=timeout, headers={
+            "Accept": "application/atom+xml",
+            "User-Agent": USER_AGENT,
+        })
+        response.raise_for_status()
+        return parse_atom(response.text, current_version)
+    except (requests.RequestException, ValueError, TypeError) as error:
+        raise RuntimeError(
+            f"GitHub API 失败（{api_error}），releases.atom 也失败（{error}）"
+        ) from error
 
 
 def read_state(path=None):
@@ -184,19 +277,31 @@ def write_state(state, path=None):
         pass
 
 
-def should_check(state, now=None, interval=CHECK_INTERVAL):
-    """距离上次检查是否已超过间隔"""
+def should_check(state, now=None, interval=CHECK_INTERVAL,
+                 attempt_interval=ATTEMPT_INTERVAL):
+    """距离上次检查是否已超过间隔；刚失败过的短时间内不再重试"""
+    current = now if now is not None else time.time()
+    attempt = state.get("last_attempt")
+    if isinstance(attempt, (int, float)) and current - attempt < attempt_interval:
+        return False
     last = state.get("last_check")
     if not isinstance(last, (int, float)):
         return True
-    return (now if now is not None else time.time()) - last >= interval
+    return current - last >= interval
 
 
 def mark_checked(state, version="", now=None):
     """记录本次检查时间与看到的版本"""
     state["last_check"] = now if now is not None else time.time()
+    state.pop("last_attempt", None)
     if version:
         state["last_seen_version"] = version
+    return state
+
+
+def mark_attempted(state, now=None):
+    """记录一次失败的检查，短时间内不重复请求（成功后由 mark_checked 清除）"""
+    state["last_attempt"] = now if now is not None else time.time()
     return state
 
 

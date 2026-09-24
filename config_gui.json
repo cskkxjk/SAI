@@ -9,6 +9,8 @@
   "paste": false,
   "audio_device": null,
   "keep_microphone_open": false,
+  "save_audio": true,
+  "audio_keep_days": 3,
   "auto_check_update": false,
   "close_behavior": "每次询问",
   "asr_api_base_url": "https://api.openai.com/v1",

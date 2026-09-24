@@ -5,9 +5,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from core.runtime_paths import data_directory, initialize_user_data
+from core.runtime_paths import (data_directory, initialize_user_data,
+                                read_pointer, write_pointer)
+from core.tools.data_migration import move_data, validate_target
 
 
 class InstallerPathsTests(unittest.TestCase):
@@ -36,6 +38,116 @@ class InstallerPathsTests(unittest.TestCase):
     def test_explicit_test_directory_is_supported(self):
         with patch.dict(os.environ, {"SAI_DATA_DIR": str(self.root / "test")}):
             self.assertEqual(data_directory(self.app), self.root / "test")
+
+    def test_pointer_file_next_to_program_wins(self):
+        custom = self.root / "Data"
+        custom.mkdir()
+        (self.app / "data-dir.txt").write_text(str(custom), encoding="utf-8")
+        self.assertEqual(data_directory(self.app), custom)
+
+    def test_pointer_file_in_user_directory_is_used(self):
+        (self.app / "installed.flag").touch()
+        custom = self.root / "PortableData"
+        custom.mkdir()
+        self.data.mkdir(parents=True)
+        (self.data / "data-dir.txt").write_bytes(
+            b"\xef\xbb\xbf" + str(custom).encode("utf-8"))
+        self.assertEqual(data_directory(self.app), custom)
+
+    def test_pointer_with_missing_parent_is_ignored(self):
+        (self.app / "data-dir.txt").write_text(str(self.root / "gone" / "SAI"),
+                                               encoding="utf-8")
+        self.assertEqual(data_directory(self.app), self.app)
+
+    def test_environment_override_beats_pointer(self):
+        custom = self.root / "Data"
+        custom.mkdir()
+        (self.app / "data-dir.txt").write_text(str(custom), encoding="utf-8")
+        with patch.dict(os.environ, {"SAI_DATA_DIR": str(self.root / "env")}):
+            self.assertEqual(data_directory(self.app), self.root / "env")
+
+    def test_write_pointer_records_every_location(self):
+        target = self.root / "Moved"
+        target.mkdir()
+        written = write_pointer(target, [self.app, self.data])
+        self.assertEqual(len(written), 2)
+        self.assertEqual(read_pointer(self.app), target)
+        self.assertEqual(read_pointer(self.data), target)
+        self.assertTrue((self.app / "data-dir.txt").read_bytes()
+                        .startswith(b"\xef\xbb\xbf"))
+
+    def test_write_pointer_reports_unwritable_target(self):
+        blocker = self.app / "blocker.txt"
+        blocker.write_text("x")
+        with self.assertRaises(OSError):
+            write_pointer(self.root / "Moved", [blocker])
+
+    def test_move_data_moves_and_merges(self):
+        source = self.root / "old"
+        target = self.root / "new"
+        (source / "2026" / "09" / "assets").mkdir(parents=True)
+        (source / "2026" / "09" / "assets" / "a.mp3").write_bytes(b"a")
+        (source / "logs").mkdir()
+        (source / "logs" / "client.log").write_text("log")
+        (source / "config_gui.json").write_text("mine")
+        (source / "data-dir.txt").write_text("keep")
+        (target / "2026" / "09" / "assets").mkdir(parents=True)
+        (target / "2026" / "09" / "assets" / "b.mp3").write_bytes(b"b")
+        report = move_data(source, target)
+        self.assertTrue((target / "2026" / "09" / "assets" / "a.mp3").exists())
+        self.assertTrue((target / "2026" / "09" / "assets" / "b.mp3").exists())
+        self.assertEqual((target / "config_gui.json").read_text(), "mine")
+        self.assertEqual((target / "logs" / "client.log").read_text(), "log")
+        self.assertEqual((source / "data-dir.txt").read_text(), "keep")
+        self.assertFalse((source / "2026").exists())
+        self.assertEqual(report["failed"], [])
+
+    def test_move_data_keeps_existing_target_files(self):
+        source = self.root / "old"
+        target = self.root / "new"
+        source.mkdir()
+        target.mkdir()
+        (source / "hot.txt").write_text("old")
+        (target / "hot.txt").write_text("new")
+        report = move_data(source, target)
+        self.assertEqual((target / "hot.txt").read_text(), "new")
+        self.assertIn("hot.txt", report["skipped"])
+
+    def test_validate_target_rejects_unsafe_choices(self):
+        source = self.root / "data"
+        source.mkdir()
+        self.assertTrue(validate_target(source, source))
+        self.assertTrue(validate_target(source, source / "inner"))
+        self.assertTrue(validate_target(source, self.root))
+        self.assertTrue(validate_target(source, self.app, app_dir=self.app))
+        file_path = self.root / "file.txt"
+        file_path.write_text("x")
+        self.assertTrue(validate_target(source, file_path))
+        good = self.root / "other" / "SAI"
+        self.assertIsNone(validate_target(source, good, app_dir=self.app))
+        self.assertTrue(good.is_dir())
+
+    def test_installer_offers_data_directory_page(self):
+        script = (Path(__file__).resolve().parent.parent / "installer"
+                  / "SAI.iss").read_text(encoding="utf-8")
+        self.assertIn("CreateInputDirPage", script)
+        self.assertIn("data-dir.txt", script)
+        self.assertIn("SaveStringsToUTF8File", script)
+        self.assertIn("Utf8Decode", script)
+
+    def test_launcher_passes_data_directory_to_children(self):
+        import gui_launcher
+        launcher = gui_launcher.Launcher.__new__(gui_launcher.Launcher)
+        launcher.processes = []
+        launcher.ready_files = {}
+        launcher.recording_files = {}
+        config = self.root / "config_gui.json"
+        with patch.object(gui_launcher, "CONFIG", config), \
+                patch.object(gui_launcher.subprocess, "Popen") as popen:
+            popen.return_value = Mock()
+            launcher._spawn("server")
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual(env["SAI_DATA_DIR"], str(gui_launcher.DATA_DIR))
 
     def test_first_run_copies_defaults_without_copying_models(self):
         (self.app / "config_gui.json").write_text('{"model_type":"sensevoice"}')

@@ -11,15 +11,17 @@ APP_DIR = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False
 
 DATA_DIR_NAME = "SAI"
 LEGACY_DATA_DIR_NAMES = ("CapsWriterOffline",)
+POINTER_NAME = "data-dir.txt"
 
 
 def _user_data_root() -> Path:
-    """Return the per-user data root for the current platform."""
+    """Per-user data root for the current platform."""
     if sys.platform == "win32":
         return Path(os.environ["LOCALAPPDATA"])
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support"
-    return Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+    return Path(os.environ.get("XDG_DATA_HOME",
+                               str(Path.home() / ".local" / "share")))
 
 
 def _adopt_data_dir(legacy, target):
@@ -36,18 +38,87 @@ def _adopt_data_dir(legacy, target):
         return False
 
 
+def read_pointer(folder):
+    """Resolve the data directory recorded next to the program or user data.
+
+    Returns None when the file is missing, unreadable or points to a place
+    whose parent folder does not exist (an unplugged drive, for example).
+    """
+    path = Path(folder) / POINTER_NAME
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    for encoding in ("utf-8", "mbcs"):
+        try:
+            text = raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                candidate = Path(os.path.expandvars(line)).expanduser()
+            except (OSError, ValueError):
+                return None
+            try:
+                candidate = Path(os.path.abspath(candidate))
+            except (OSError, ValueError):
+                return None
+            if not candidate.parent.is_dir():
+                return None
+            return candidate
+        return None
+    return None
+
+
+def write_pointer(target, folders):
+    """Record the data directory so every process finds it after a restart."""
+    target = Path(target).resolve()
+    written = []
+    for folder in folders:
+        path = Path(folder) / POINTER_NAME
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(str(target), encoding="utf-8-sig")
+        except OSError:
+            continue
+        written.append(path)
+    if not written:
+        raise OSError(f"无法在 {Path(folders[0])} 写入数据目录记录文件")
+    return written
+
+
+def default_data_directory(app_dir=APP_DIR):
+    """The directory used when nothing points somewhere else."""
+    if not (app_dir / "installed.flag").is_file():
+        return Path(app_dir)
+    return _user_data_root() / DATA_DIR_NAME
+
+
 def data_directory(app_dir=APP_DIR):
     override = os.environ.get("SAI_DATA_DIR")
     if override:
         return Path(override).resolve()
-    if not (app_dir / "installed.flag").is_file():
-        return app_dir
-    local_app_data = _user_data_root()
-    target = local_app_data / DATA_DIR_NAME
+    default = default_data_directory(app_dir)
+    seen = []
+    for folder in (Path(app_dir), default):
+        if folder in seen:
+            continue
+        seen.append(folder)
+        pointer = read_pointer(folder)
+        if pointer is not None:
+            return pointer
+    if default == Path(app_dir):
+        return Path(app_dir)
+    target = default
     if target.exists():
         return target
     for name in LEGACY_DATA_DIR_NAMES:
-        legacy = local_app_data / name
+        legacy = target.parent / name
         if not legacy.is_dir():
             continue
         if _adopt_data_dir(legacy, target):
