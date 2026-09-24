@@ -61,25 +61,23 @@ jobs:
           curl -fL --retry 3 -o "$RUNNER_TEMP/runtime.tar.gz" \
             "https://github.com/ggml-org/llama.cpp/releases/download/b10621/$ARCHIVE"
           echo "$SHA256  $RUNNER_TEMP/runtime.tar.gz" | shasum -a 256 -c -
-          mkdir -p core/server/engines/llama/bin
-          tar -xzf "$RUNNER_TEMP/runtime.tar.gz" -C core/server/engines/llama/bin --strip-components=1
-          /usr/bin/python3 - <<'PY'
-          import pathlib
-          import shutil
-
-          keep = ("libggml", "libllama.")
-          bin_dir = pathlib.Path("core/server/engines/llama/bin")
-          removed = 0
-          for path in sorted(bin_dir.iterdir()):
-              if path.name.startswith(keep):
-                  continue
-              if path.is_dir():
-                  shutil.rmtree(path)
-              else:
-                  path.unlink()
-              removed += 1
-          print(f"保留 libggml* / libllama* 运行库，移除 {removed} 个无关文件")
-          PY
+          rm -rf "$RUNNER_TEMP/runtime"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar -xzf "$RUNNER_TEMP/runtime.tar.gz" -C "$RUNNER_TEMP/runtime" --strip-components=1
+          bin_dir=core/server/engines/llama/bin
+          mkdir -p "$bin_dir"
+          copied=0
+          for path in "$RUNNER_TEMP"/runtime/libggml* "$RUNNER_TEMP"/runtime/libllama.*; do
+            if [ -e "$path" ]; then
+              cp -R "$path" "$bin_dir/"
+              copied=$((copied + 1))
+            fi
+          done
+          if [ "$copied" -lt 6 ]; then
+            echo "::error::运行库条目过少（$copied），请检查压缩包内容"
+            exit 1
+          fi
+          echo "已注入 $copied 个 libggml* / libllama* 运行库条目"
 
       - name: 校验运行库可加载
         run: |
