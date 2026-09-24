@@ -109,4 +109,7 @@ jobs:
           gh release upload $env:GITHUB_REF_NAME "dist\installer\SAI-$version-Setup.exe" dist\installer\SHA256SUMS.txt --clobber
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::warning::Release $env:GITHUB_REF_NAME 尚不存在或上传失败，安装包保留在 Artifact 中"
+          } else {
+            Write-Host "已上传到 Release $env:GITHUB_REF_NAME"
           }
+          exit 0
