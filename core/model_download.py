@@ -205,6 +205,8 @@ def install_llama_runtime(archive, bin_dir, cancel=None, suffix=None):
                 name = PurePosixPath(entry.name.replace("\\", "/")).name
                 if entry.isdir() or not name.lower().endswith(suffix):
                     continue
+                if suffix == ".dylib" and not name.startswith(("libggml", "libllama.")):
+                    continue
                 entry.name = name
                 members.append(entry)
             for entry in members:

@@ -973,6 +973,8 @@ class LlamaRuntimeTests(unittest.TestCase):
                         ("llama-b10621/libllama.0.dylib", b"\xcf\xfa\xed\xfe"),
                         ("llama-b10621/libggml.0.dylib", b"\xcf\xfa\xed\xfe"),
                         ("llama-b10621/libggml-cpu.dylib", b"\xcf\xfa\xed\xfe"),
+                        ("llama-b10621/libmtmd.0.dylib", b"\xcf\xfa\xed\xfe"),
+                        ("llama-b10621/libllama-common.0.dylib", b"\xcf\xfa\xed\xfe"),
                         ("llama-b10621/llama-cli", b"#!/bin/sh"),
                         ("llama-b10621/README.md", b"hi")):
                     info = tarfile.TarInfo(name)
@@ -993,6 +995,8 @@ class LlamaRuntimeTests(unittest.TestCase):
                 self.assertTrue(link_path.is_file())
             else:
                 self.assertTrue(link_path.is_symlink())
+            self.assertFalse((bin_dir / "libmtmd.0.dylib").exists())
+            self.assertFalse((bin_dir / "libllama-common.0.dylib").exists())
             self.assertFalse((bin_dir / "llama-cli").exists())
             self.assertFalse((bin_dir / "README.md").exists())
             with tarfile.open(root / "empty.tar.gz", "w:gz") as bundle:

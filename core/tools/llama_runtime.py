@@ -39,8 +39,8 @@ DARWIN_CORE_LIBS = (
     "libggml-base.dylib",
     "libllama.dylib",
     "libggml-cpu.dylib",
-    "libggml-metal.dylib",
     "libggml-blas.dylib",
+    "libggml-rpc.dylib",
 )
 RELEASE_URL = ("https://github.com/ggml-org/llama.cpp/releases/download/"
                "{tag}/{archive}")
@@ -250,6 +250,8 @@ def expected_files(base_dir) -> Tuple[str, ...]:
     if isinstance(files, list) and files:
         return tuple(str(name) for name in files)
     if sys.platform == "darwin":
+        if platform_arch() == "arm64":
+            return (*DARWIN_CORE_LIBS, "libggml-metal.dylib")
         return DARWIN_CORE_LIBS
     if sys.platform == "win32":
         return ("ggml-vulkan.dll", *lib_names())

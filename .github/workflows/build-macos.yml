@@ -67,8 +67,7 @@ jobs:
           import pathlib
           import shutil
 
-          keep = ("libllama.", "libggml.", "libggml-base.", "libggml-cpu.",
-                  "libggml-metal.", "libggml-blas.")
+          keep = ("libggml", "libllama.")
           bin_dir = pathlib.Path("core/server/engines/llama/bin")
           removed = 0
           for path in sorted(bin_dir.iterdir()):
@@ -79,23 +78,25 @@ jobs:
               else:
                   path.unlink()
               removed += 1
-          print(f"保留 {len(keep)} 类运行库，移除 {removed} 个无关文件")
+          print(f"保留 libggml* / libllama* 运行库，移除 {removed} 个无关文件")
           PY
 
       - name: 校验运行库可加载
         run: |
           /usr/bin/python3 - <<'PY'
           import ctypes
+          import json
           import pathlib
 
           bin_dir = pathlib.Path("core/server/engines/llama/bin")
-          for name in ("libggml-base.dylib", "libggml.dylib", "libggml-cpu.dylib",
-                       "libggml-metal.dylib", "libggml-blas.dylib", "libllama.dylib"):
+          section = json.loads((bin_dir / "runtime-version.json").read_text(
+              encoding="utf-8"))["platforms"]["darwin-${{ matrix.arch }}"]
+          for name in section["files"]:
               path = bin_dir / name
               if not path.exists():
                   raise SystemExit(f"缺少运行库：{path}")
               ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
-          print("运行库加载正常")
+          print(f"运行库加载正常：{len(section['files'])} 个")
           PY
 
       - name: 打包 SAI.app

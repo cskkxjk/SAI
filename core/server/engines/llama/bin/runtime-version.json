@@ -45,7 +45,8 @@
         "libllama.dylib",
         "libggml-cpu.dylib",
         "libggml-metal.dylib",
-        "libggml-blas.dylib"
+        "libggml-blas.dylib",
+        "libggml-rpc.dylib"
       ],
       "url": ""
     },
@@ -57,8 +58,8 @@
         "libggml-base.dylib",
         "libllama.dylib",
         "libggml-cpu.dylib",
-        "libggml-metal.dylib",
-        "libggml-blas.dylib"
+        "libggml-blas.dylib",
+        "libggml-rpc.dylib"
       ],
       "url": ""
     }
