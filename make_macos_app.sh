@@ -30,6 +30,26 @@ copy_payload() {
   for img in icon.png icon-recording.png icon.icns; do
     [ -f "$ROOT/assets/$img" ] && cp -f "$ROOT/assets/$img" "$dest/assets/$img"
   done
+  # 仓库根目录 config_gui.json 是开发者的本机配置（Windows 可能与 macOS 不兼容），
+  # 这里修正 app 内配置：GGUF 模型改 paraformer，缺省快捷键用右 Option（alt_r）。
+  local cfg="$dest/config_gui.json"
+  if [ -f "$cfg" ] && [ -x /usr/bin/python3 ]; then
+    /usr/bin/python3 - "$cfg" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+if data.get("model_type") in ("fun_asr_nano", "qwen_asr"):
+    data["model_type"] = "paraformer"
+if not data.get("shortcuts"):
+    data["shortcuts"] = [{"key": "alt_r", "type": "keyboard",
+                          "suppress": True, "hold_mode": True, "enabled": True}]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+PY
+  fi
   # 关键：存在 canonical 语法标记 -> 运行期数据写到用户数据目录
   touch "$dest/installed.flag"
 }

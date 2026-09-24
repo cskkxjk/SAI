@@ -8,12 +8,17 @@
 """
 from pathlib import Path
 import importlib.util
+import re
 
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
 from PyInstaller.building.osx import BUNDLE
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 root = Path(SPECPATH)
+
+_match = re.search(r"^__version__\s*=\s*['\"]([^'\"]+)['\"]",
+                   (root / "config_server.py").read_text(encoding="utf-8"), re.M)
+VERSION = _match.group(1) if _match else "0.0.0"
 
 required = ("srt", "gguf", "onnxruntime", "sherpa_onnx", "sounddevice",
             "soundfile", "pynput", "PIL", "AppKit", "Foundation", "objc", "Quartz")
@@ -84,8 +89,8 @@ info_plist = {
     "CFBundleName": "SAI",
     "CFBundleDisplayName": "SAI 离线语音输入",
     "CFBundleIdentifier": "com.cskkxjk.sai",
-    "CFBundleShortVersionString": "1.0.2",
-    "CFBundleVersion": "1.0.2",
+    "CFBundleShortVersionString": VERSION,
+    "CFBundleVersion": VERSION,
     "CFBundleIconFile": "icon.icns",
     "NSMicrophoneUsageDescription": "SAI 需要使用麦克风进行离线语音识别。",
     "NSAppleEventsUsageDescription": "SAI 需要发送通知或打开文件夹。",
