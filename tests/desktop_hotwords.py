@@ -78,6 +78,22 @@ class EditorTests(unittest.TestCase):
         self.assertEqual((self.root / "hot.txt").read_bytes(), original_hot)
         self.assertIn("# keep comment", (self.root / "hot-rule.txt").read_text(encoding="utf-8"))
 
+    def test_preview_applies_hotwords_before_rules(self):
+        self.set_text("hot.txt", "123-4567-8910 | 我的手机号\n")
+        self.set_text("hot-rule.txt", "8910 = 0000\n")
+        self.editor.sample.set("我的手机号")
+        self.editor._preview()
+        self.assertEqual(self.editor.result.get(), "123-4567-0000")
+
+    def test_preview_rebuilds_hotword_corrector_after_edits(self):
+        self.set_text("hot.txt", "AAA | 别名\n")
+        self.editor.sample.set("别名")
+        self.editor._preview()
+        self.assertEqual(self.editor.result.get(), "AAA")
+        self.set_text("hot.txt", "BBB | 别名\n")
+        self.editor._preview()
+        self.assertEqual(self.editor.result.get(), "BBB")
+
     def test_invalid_rules_do_not_overwrite_file(self):
         original = (self.root / "hot-rule.txt").read_bytes()
         self.set_text("hot-rule.txt", "[ = invalid")

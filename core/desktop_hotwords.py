@@ -18,6 +18,8 @@ class HotwordEditor(ttk.Frame):
         self.editors = {}
         self.names = ("hot.txt", "hot-rule.txt")
         self.status = tk.StringVar()
+        self._corrector = None
+        self._corrector_source = None
 
         card = Card(self, title="热词与替换规则")
         card.pack(fill="x")
@@ -273,9 +275,24 @@ class HotwordEditor(ttk.Frame):
         self._refresh_table()
         self.status.set(f"已加载 {name}")
 
+    def _hotword_corrector(self):
+        content = self._content("hot.txt")
+        if self._corrector_source != content:
+            from core.client.hotword.hot_phoneme import PhonemeCorrector
+            corrector = PhonemeCorrector()
+            corrector.update_hotwords(content)
+            self._corrector = corrector
+            self._corrector_source = content
+        return self._corrector
+
     def _preview(self):
         try:
-            text = self.sample.get()
+            text = self._hotword_corrector().correct(self.sample.get()).text
+        except Exception as exc:
+            self.result.set("")
+            messagebox.showerror("热词匹配失败", str(exc), parent=self)
+            return
+        try:
             for pattern, replacement in parse_rules(self._content("hot-rule.txt")):
                 text = pattern.sub(replacement, text)
         except ValueError as exc:
