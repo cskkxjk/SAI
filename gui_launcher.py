@@ -37,6 +37,9 @@ from config_client import __version__ as APP_VERSION
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 CONFIG = DATA_DIR / "config_gui.json"
+# 模型根目录（其下是 models/）：Windows 与程序同目录；macOS 在用户数据目录，
+# 避免写入 .app 包内破坏签名。
+MODEL_ROOT = DATA_DIR if sys.platform == "darwin" else ROOT
 DEFAULT_MIC = "系统默认录音设备"
 DEFAULT_SHORTCUTS = [{"key": "caps_lock", "type": "keyboard", "enabled": True}]
 PUNC_MODEL = (
@@ -992,7 +995,7 @@ class Launcher(tk.Tk):
         if not info or not hasattr(self, "model_status"):
             return
         quantization = self.vars["qwen_quantization"].get()
-        missing = missing_files(ROOT, self._model_key(), quantization)
+        missing = missing_files(MODEL_ROOT, self._model_key(), quantization)
         status = (f"文件齐全（{len(info['files'])} 个，可校验）" if not missing
                   else f"模型未就绪，缺少或为空的文件：{len(missing)} / {len(info['files'])}")
         if self._model_key() == "openai_api":
@@ -1051,13 +1054,13 @@ class Launcher(tk.Tk):
             return
         if not messagebox.askokcancel(
                 "从 ModelScope 下载",
-                f"模型：{MODEL_INFO[name]['label']} {quantization if name == 'qwen_asr' else ''}\n保存位置：{ROOT / 'models'}\n\n"
+                f"模型：{MODEL_INFO[name]['label']} {quantization if name == 'qwen_asr' else ''}\n保存位置：{MODEL_ROOT / 'models'}\n\n"
                 "将联网校验并下载缺少或损坏的文件，可能需要数 GB 空间。\n是否继续？",
                 parent=self):
             return
 
         def work(progress, cancel):
-            download_model(name, ROOT, progress, cancel, quantization)
+            download_model(name, MODEL_ROOT, progress, cancel, quantization)
             return "模型下载并校验完成，可以启动"
 
         self._run_download(work, "正在连接 ModelScope...",
@@ -1610,7 +1613,7 @@ class Launcher(tk.Tk):
         for stale in list(log_dir.glob(".ready-*")) + list(log_dir.glob(".recording-*")):
             stale.unlink(missing_ok=True)
         info = MODEL_INFO[self._model_key()]
-        missing = missing_files(ROOT, self._model_key(), self.vars["qwen_quantization"].get())
+        missing = missing_files(MODEL_ROOT, self._model_key(), self.vars["qwen_quantization"].get())
         if missing:
             messagebox.showerror(
                 "模型未安装",

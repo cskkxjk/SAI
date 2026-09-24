@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from pathlib import Path
 from core.runtime_paths import APP_DIR, DATA_DIR
@@ -84,8 +85,9 @@ class ModelDownloadLinks:
 class ModelPaths:
     """模型文件路径配置"""
 
-    # 基础目录
-    model_dir = APP_DIR / 'models'
+    # 基础目录：Windows 放在程序目录旁；macOS 放在用户数据目录，
+    # 避免首次下载模型写入 .app 包内而破坏代码签名。
+    model_dir = (DATA_DIR / 'models') if sys.platform == 'darwin' else (APP_DIR / 'models')
 
     # Paraformer 模型路径
     paraformer_dir = model_dir / 'Paraformer' / "speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx"

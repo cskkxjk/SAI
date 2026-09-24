@@ -37,9 +37,6 @@ copy_payload() {
 # ---- onedir（dist/SAI）----
 if [ -d "$ROOT/dist/SAI" ]; then
   copy_payload "$ROOT/dist/SAI"
-  if [ -d "$ROOT/models" ] && [ ! -e "$ROOT/dist/SAI/models" ]; then
-    ln -s "$ROOT/models" "$ROOT/dist/SAI/models"
-  fi
   echo "已整理 onedir：$ROOT/dist/SAI"
 fi
 
@@ -48,10 +45,8 @@ APP="$ROOT/dist/SAI.app"
 if [ -d "$APP" ]; then
   MACOS="$APP/Contents/MacOS"
   copy_payload "$MACOS"
-  if [ -d "$ROOT/models" ]; then
-    mkdir -p "$MACOS/models"
-    rsync -a --exclude '__pycache__' "$ROOT/models/" "$MACOS/models/"
-  fi
+  # 模型不放进 app 包（macOS 上模型位于用户数据目录，首次运行在界面下载），
+  # 这样分发的是瘦身包，且不会因写入 .app 破坏代码签名。
   codesign --force --deep --sign - "$APP"
   echo "已整理并签名：$APP"
 fi
