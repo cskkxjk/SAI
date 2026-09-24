@@ -1,8 +1,8 @@
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 3, 0),
-    prodvers=(1, 0, 3, 0),
+    filevers=(1, 0, 4, 0),
+    prodvers=(1, 0, 4, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
           '080404b0',
           [StringStruct('CompanyName', 'SAI'),
            StringStruct('FileDescription', 'SAI 离线语音输入'),
-           StringStruct('FileVersion', '1.0.3'),
+           StringStruct('FileVersion', '1.0.4'),
            StringStruct('InternalName', 'SAI'),
            StringStruct('LegalCopyright', 'MIT License'),
            StringStruct('OriginalFilename', 'SAI.exe'),
            StringStruct('ProductName', 'SAI'),
-           StringStruct('ProductVersion', '1.0.3')])
+           StringStruct('ProductVersion', '1.0.4')])
       ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])
   ]

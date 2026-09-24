@@ -1,5 +1,14 @@
 # 更新日志
 
+## v1.0.4（SAI）
+
+- **新增 macOS 支持（Apple Silicon）**：发布 `SAI-1.0.4-macos-arm64.zip`（macOS 12+，M 系列芯片）。菜单栏原生图标替代 Windows 托盘；默认快捷键为右 Option，按住说话；上屏默认走剪贴板 `⌘V`（避免输入法拦截英文）；前台窗口检测改用 NSWorkspace，识别到上屏延迟从约 1.9s 降到约 0.33s；启动时自检麦克风与辅助功能权限；退出时清理残留子进程，避免端口被占用。目前仅支持 ONNX 引擎（Paraformer、SenseVoice）与标点模型，GGUF 引擎暂未在 macOS 构建。应用为 ad-hoc 签名，首次打开需右键「打开」。
+- **macOS 数据目录**：模型、配置、热词、角色、日志与录音统一存放在 `~/Library/Application Support/SAI`，不写入 `.app` 内部（避免破坏代码签名）；模型在应用内按需下载。
+- **新增「校对」角色**：读取选中文本，对识别结果做上下文纠错；可用「校对 / 纠错 / 检查错别字」触发（角色名 `|` 别名机制此前已支持）。
+- **云端 LLM 超时放宽**：OpenAI / DeepSeek / Moonshot / Zhipu 等云端提供商超时由 2s 放宽到 30s；本地 Ollama / LMStudio 保持 2s。
+- **细节修复**：活动窗口检测增加 0.5 秒缓存，降低识别延迟；修复顶层 `import keyboard` 在 macOS 上导致的崩溃；依赖改为按系统安装（macOS 使用 `onnxruntime`，Windows 保持 `onnxruntime-directml`）；启动脚本先探测端口，避免残留服务端冲突。
+- **自动构建**：新增 GitHub Actions，tag 触发时自动构建并附带 Windows 安装包与 macOS arm64 压缩包，不再依赖本地打包环境。
+
 ## v1.0.3（SAI）
 
 - **更新提醒与自动更新**：启动后自动检查 GitHub Release（每天一次，「选项」页可关闭开关，也可手动「检查更新」）。有新版本时左上角出现 `new` 徽标，弹窗展示更新说明；安装版可一键「下载并安装」——下载后按发布资产的 SHA256 校验，退出 SAI 后静默覆盖安装并自动重启，配置与个人数据不受影响。支持「跳过此版本」，只跳过被标记的那一个版本。

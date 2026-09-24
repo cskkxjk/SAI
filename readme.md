@@ -114,7 +114,7 @@ SAI 目前只在 **Windows 10/11 (64 位)** 上构建和测试，安装包与便
 
 #### 使用安装向导
 
-安装包位于 `dist/installer`，运行 `SAI-1.0.3-Setup.exe`。
+安装包位于 `dist/installer`，运行 `SAI-1.0.4-Setup.exe`。
 这是不含模型的单文件安装包，只需复制 Setup.exe，不再需要旁边的 `.bin` 文件。
 安装过程不下载模型；首次使用本地识别时，在程序配置页从 ModelScope 按需下载。
 
