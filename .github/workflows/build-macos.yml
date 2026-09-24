@@ -1,0 +1,58 @@
+name: Build macOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（留空则使用 tag 或 config_server.__version__）"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 解析版本号
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VER="$INPUT_VERSION"
+          if [ -z "$VER" ] && [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$VER" ]; then
+            VER="$(sed -n "s/^__version__ = '\([^']*\)'.*/\1/p" config_server.py | head -n 1)"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: 打包 SAI.app
+        run: ./release_macos.sh "${{ steps.version.outputs.version }}"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAI-${{ steps.version.outputs.version }}-macos-arm64
+          path: release/*.zip
+          if-no-files-found: error
+
+      - name: 附加到 Release（若已存在）
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" release/*.zip --clobber \
+            || echo "Release $GITHUB_REF_NAME 尚不存在，安装包保留在 Artifact 中"
