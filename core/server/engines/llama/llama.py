@@ -8,6 +8,7 @@ import ctypes
 import codecs
 import struct
 import time
+import platform
 from collections import deque, Counter
 import numpy as np
 import gguf
@@ -529,17 +530,21 @@ class LlamaContext:
         params.offload_kqv = offload_kqv
         params.no_perf = no_perf
         
-        # 线程配置
+        # 线程配置：x86 按逻辑核折半（≈物理核），Apple Silicon 无 SMT 用满全部核心
         cpu_count = os.cpu_count() or 4
+        smt = platform.machine().lower() not in ("arm64", "aarch64")
+        default_threads = max(1, cpu_count // 2) if smt else cpu_count
         if n_threads:
             params.n_threads = n_threads
         else:
-            params.n_threads = cpu_count // 2
+            params.n_threads = default_threads
 
         if n_threads_batch:
             params.n_threads_batch = n_threads_batch
+        elif n_threads:
+            params.n_threads_batch = n_threads
         else:
-            params.n_threads_batch = n_threads if n_threads else cpu_count
+            params.n_threads_batch = default_threads
 
         self.ptr = llama_init_from_model(model.ptr, params)
         if not self.ptr:
