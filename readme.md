@@ -4,19 +4,21 @@
 
 > **按住快捷键说话，松开就上屏。默认 CapsLock，可在图形界面里自由改键。**
 
-**下载**：[Releases](https://github.com/cskkxjk/SAI/releases/latest) 里的 Windows 安装包，或者直接 clone 源码运行。
+**下载**：[Releases](https://github.com/cskkxjk/SAI/releases/latest) 里的 Windows / macOS 安装包，或者直接 clone 源码运行。
 
-**SAI** 是一个专为 Windows 打造的离线语音输入与 AI 智能体控制工具，
+**SAI** 是一个离线语音输入与 AI 智能体控制工具，支持 Windows 与 macOS，
 默认使用本地模型，也支持可选的 OpenAI 兼容语音转写 API。
 
 > [!NOTE]
-> **SAI 是 [CapsWriter-Offline](https://github.com/HaujetZhao/CapsWriter-Offline) 的 Windows 桌面分支。**
+> **SAI 是 [CapsWriter-Offline](https://github.com/HaujetZhao/CapsWriter-Offline) 的跨平台桌面分支。**
 > 上游项目由 [Haujet Zhao](https://github.com/HaujetZhao) 开发，离线识别、热词系统、LLM 角色等
 > 核心能力均来自上游（原项目图标、名称与版权归上游所有）。本分支在其基础上重做了桌面体验：
 >
+> - 更轻量的推理后端：把 CapsWriter 的后端服务换成 **自研 ONNX 推理 + llama.cpp GGUF 方案**
+>   （Fun-ASR、Qwen3-ASR 走 GGUF，Paraformer、SenseVoice 走 ONNX），零 PyTorch 依赖，安装包约 67 MB
 > - 全新的图形启动器：识别设置、录音、快捷键、模型文件、热词与替换、语音 API、设备检测
 >   集中在同一窗口，美术风格参考 [clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev)
-> - 一键安装包：开始菜单/桌面快捷方式、卸载入口，安装目录与用户数据分离
+> - 一键安装包：开始菜单/桌面快捷方式、卸载入口，安装目录与用户数据分离；macOS 提供 .dmg/.zip
 > - 快捷键可自由修改（键盘组合键、鼠标侧键），不再局限于 CapsLock
 > - 内置模型下载与校验、硬件检测与建议配置、远端 OpenAI 兼容 API 转写
 > - 热词、别名与正则替换规则可直接在图形界面内编辑并保存
@@ -78,6 +80,9 @@
 | SenseVoice-Small | ★★★☆☆ | ★★★★★ | ONNX | ✅ |
 | Fun-ASR-Nano | ★★★★☆ | ★★★★☆ | ONNX + GGUF | ✅ |
 | Qwen3-ASR | ★★★★★ | ★★★☆☆ | ONNX + GGUF | ✅ |
+
+> GGUF 引擎（Fun-ASR、Qwen3-ASR）由 llama.cpp 解码，Windows 用 Vulkan、macOS 用 Metal 加速；
+> ONNX 引擎在 Windows 使用 DirectML。Paraformer / SenseVoice 在 macOS 同样可用（CPU 推理）。
 
 
 性能参考（20s 音频转录延迟）：
