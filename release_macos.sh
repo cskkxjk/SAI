@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
-VER="${1:-$(.venv/bin/python -c 'from config_server import __version__; print(__version__)')}"
+VER="${1:-}"
 
 case "$(uname -m)" in
   arm64|aarch64) ARCH="arm64" ;;
@@ -27,6 +27,10 @@ fi
 
 echo "== 同步打包依赖 =="
 "$UV" sync --group build
+
+if [ -z "$VER" ]; then
+  VER="$(.venv/bin/python -c 'from config_server import __version__; print(__version__)')"
+fi
 
 echo "== PyInstaller 打包（版本 ${VER}，架构 ${ARCH}）=="
 .venv/bin/python -m PyInstaller --noconfirm --distpath dist build-macos.spec

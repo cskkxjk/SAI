@@ -22,10 +22,14 @@ jobs:
         include:
           - runner: macos-15
             arch: arm64
+            python: "3.14"
           - runner: macos-15-intel
             arch: x64
+            python: "3.13"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v4
 

@@ -2,18 +2,25 @@
 name = "sai"
 version = "1.0.4"
 description = "SAI 离线语音输入工具"
-requires-python = ">=3.14,<3.15"
+requires-python = ">=3.13,<3.15"
 
 dependencies = [
     # ASR 核心
     "sherpa-onnx",
+    # Windows/macOS 的 sherpa 轮子拆分依赖 core（linux 轮子自带，uv 解析时按 linux 轮子元数据会漏掉）
+    "sherpa-onnx-core==1.13.8; sys_platform == 'win32' or sys_platform == 'darwin'",
     "numpy",
     "gguf",
     "onnxruntime-directml; sys_platform == 'win32'",
-    "onnxruntime; sys_platform != 'win32'",
+    # Intel Mac 官方轮子止步 1.23.2（Py3.13），Apple Silicon 用最新版
+    "onnxruntime==1.23.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "onnxruntime; sys_platform == 'darwin' and platform_machine != 'x86_64'",
+    "onnxruntime; sys_platform != 'win32' and sys_platform != 'darwin'",
     "sentencepiece",
     "soundfile",
-    "numba",
+    # Intel Mac 的 numba/llvmlite 轮子止步 0.62/0.45（Py3.13）
+    "numba==0.62.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "numba; sys_platform != 'darwin' or platform_machine != 'x86_64'",
 
     # 网络与 API
     "websockets",
