@@ -127,6 +127,21 @@ jobs:
           print(f"strip 后关键动态库加载正常：{len(loaded)} 个：{', '.join(loaded)}")
           PY
 
+      - name: 校验主程序内嵌 PKG 归档完好
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import pathlib
+
+          exe = pathlib.Path("dist/SAI.app/Contents/MacOS/SAI")
+          if not exe.is_file():
+              raise SystemExit(f"缺少主程序：{exe}")
+          data = exe.read_bytes()
+          if b"MEI\x0c\x0b\x0a\x0b\x0e" not in data:
+              raise SystemExit(
+                  "主程序缺少 PyInstaller 内嵌 PKG 归档（被 strip 破坏），禁止发布")
+          print(f"主程序内嵌 PKG 归档完好，{len(data)} 字节")
+          PY
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:

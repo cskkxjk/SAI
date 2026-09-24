@@ -62,6 +62,10 @@ fi
 
 # ---- 二进制瘦身 ----
 # 去掉动态库的调试信息与局部符号（不影响运行；必须在签名前做，否则签名失效）。
+# 注意：只允许 strip 动态库，绝不能 strip 主程序与 Python 框架可执行文件：
+# PyInstaller 把 PKG 归档追加在可执行文件尾部，并改写 Mach-O 头把它伪装成字符串表
+# （fix_exe_for_code_signing），strip 会重写符号表/字符串表，把归档整段删掉，启动时报
+# "Could not load PyInstaller's embedded PKG archive from the executable"。
 strip_bundle() {
   local app="$1"
   local before after count
@@ -69,11 +73,27 @@ strip_bundle() {
   count=$(find "$app/Contents" -type f \( -name '*.dylib' -o -name '*.so' \) | wc -l | tr -d ' ')
   find "$app/Contents" -type f \( -name '*.dylib' -o -name '*.so' \) -print0 \
     | xargs -0 -n 20 strip -S -x 2>/dev/null || true
-  for f in "$app"/Contents/MacOS/SAI "$app"/Contents/Frameworks/Python.framework/Versions/*/Python; do
-    [ -f "$f" ] && strip -S -x "$f" 2>/dev/null || true
-  done
   after=$(du -sk "$app" | awk '{print $1}')
   echo "strip：处理 $count 个动态库，${before}K -> ${after}K"
+}
+
+# 校验主程序内嵌的 PyInstaller PKG 归档仍在（MAGIC 见 PyInstaller.archive.writers），
+# 被 strip 误伤时立即失败，避免再发布坏包。
+verify_embedded_pkg() {
+  local exe="$1"
+  [ -f "$exe" ] || return 0
+  [ -x /usr/bin/python3 ] || return 0
+  /usr/bin/python3 - "$exe" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "rb") as f:
+    data = f.read()
+if b"MEI\x0c\x0b\x0a\x0b\x0e" not in data:
+    raise SystemExit(
+        f"主程序缺少 PyInstaller 内嵌 PKG 归档（可能被 strip 破坏）：{path}")
+print(f"主程序内嵌 PKG 归档完好：{path}")
+PY
 }
 
 # ---- .app ----
@@ -84,6 +104,7 @@ if [ -d "$APP" ]; then
   # 模型不放进 app 包（macOS 上模型位于用户数据目录，首次运行在界面下载），
   # 这样分发的是瘦身包，且不会因写入 .app 破坏代码签名。
   strip_bundle "$APP"
+  verify_embedded_pkg "$MACOS/SAI"
   codesign --force --deep --sign - "$APP"
   echo "已整理并签名：$APP"
 fi
