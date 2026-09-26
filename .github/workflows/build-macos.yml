@@ -165,3 +165,32 @@ jobs:
           gh release upload "$TAG" release/* --clobber \
             || echo "Release $TAG 尚不存在，安装包保留在 Artifact 中"
           exit 0
+
+  checksums:
+    # 等两个架构都上传完再重建校验和，文件内容始终与 Release 当前资产一致
+    needs: macos
+    if: github.ref_type == 'tag' || inputs.upload_release == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析版本号
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          SOURCE="$(sed -n "s/^__version__ = '\([^']*\)'.*/\1/p" config_server.py | head -n 1)"
+          VER="$INPUT_VERSION"
+          if [ -z "$VER" ] && [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$VER" ]; then
+            VER="$SOURCE"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: 更新 Release 校验和（SHA256SUMS.txt）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/update_sha256sums.py "v${{ steps.version.outputs.version }}"

@@ -2,6 +2,12 @@ name: Build Windows Release
 
 on:
   workflow_dispatch:
+    inputs:
+      upload_release:
+        description: "上传产物到 Release（v<版本号>，供 workflow_dispatch 重建时使用）"
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -82,32 +88,33 @@ jobs:
           & $iscc installer\SAI.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败" }
 
-      - name: 生成 SHA256SUMS
-        shell: pwsh
-        run: |
-          $setup = "dist/installer/sai-desktop-win-x64.exe"
-          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
-          "$hash  sai-desktop-win-x64.exe" | Set-Content dist/installer/SHA256SUMS.txt -Encoding ascii
-
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: sai-desktop-win-x64
-          path: |
-            dist/installer/sai-desktop-win-x64.exe
-            dist/installer/SHA256SUMS.txt
+          path: dist/installer/sai-desktop-win-x64.exe
           if-no-files-found: error
 
       - name: 附加到 Release（若已存在）
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.upload_release == true
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload $env:GITHUB_REF_NAME "dist\installer\sai-desktop-win-x64.exe" dist\installer\SHA256SUMS.txt --clobber
+          $tag = "v${{ steps.version.outputs.version }}"
+          gh release upload $tag "dist\installer\sai-desktop-win-x64.exe" --clobber
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::warning::Release $env:GITHUB_REF_NAME 尚不存在或上传失败，安装包保留在 Artifact 中"
+            Write-Host "::warning::Release $tag 尚不存在或上传失败，安装包保留在 Artifact 中"
           } else {
-            Write-Host "已上传到 Release $env:GITHUB_REF_NAME"
+            Write-Host "已上传到 Release $tag"
           }
           exit 0
+
+      - name: 更新 Release 校验和（SHA256SUMS.txt）
+        if: github.ref_type == 'tag' || inputs.upload_release == true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.version.outputs.version }}"
+          & ".venv\Scripts\python.exe" .github\scripts\update_sha256sums.py $tag
