@@ -17,6 +17,11 @@ import sys
 import urllib.error
 import urllib.request
 
+# Windows CI 的 Python 默认用 cp1252 输出，中文日志会抛 UnicodeEncodeError，统一切到 UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 API = "https://api.github.com"
 SUM_NAME = "SHA256SUMS.txt"
 
