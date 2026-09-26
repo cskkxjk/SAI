@@ -19,10 +19,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 统一用 Python 3.13：onnxruntime 固定在 1.23.2（macOS 13.0 兼容的最后版本），
+        # 该版本没有 cp314 轮子，3.14 会在 uv sync 阶段直接失败。
         include:
           - runner: macos-15
             arch: arm64
-            python: "3.14"
+            python: "3.13"
           - runner: macos-15-intel
             arch: x64
             python: "3.13"
