@@ -1,11 +1,9 @@
-import os
 import json
-from collections.abc import Iterable
 from pathlib import Path
 from core.runtime_paths import DATA_DIR
 
 # 版本信息
-__version__ = '1.0.5'
+__version__ = '1.0.6'
 
 # 项目根目录
 BASE_DIR = str(DATA_DIR)
@@ -71,6 +69,10 @@ class ClientConfig:
     hot_thresh = 0.85           # RAG 替换热词阈值（高阈值，用于实际替换）
     hot_similar = 0.6           # RAG 相似热词阈值（低阈值，用于 LLM 上下文）
     hot_rule = True             # 是否启用自定义规则替换（基于正则表达式）
+
+    voice_phrase = _gui_value('voice_phrase', False)                      # 是否启用语音短语替换（说短语，替换为录入时标注的文字）
+    voice_phrase_threshold = _gui_value('voice_phrase_threshold', 8.0)    # 语音短语命中阈值（DTW 距离，越小越严格；同词约 5~7.5，异词约 8.5+）
+    voice_phrase_hint = _gui_value('voice_phrase_hint', False)            # 命中语音短语时用 Toast 提示（调试用，默认关闭，避免打扰上屏）
 
     llm_enabled = True          # 是否启用 LLM 润色功能，需要配置 LLM/ 目录下的角色文件
     llm_stop_key = 'esc'        # 中断 LLM 输出的快捷键

@@ -130,7 +130,8 @@ info_plist = {
     "NSMicrophoneUsageDescription": "SAI 需要使用麦克风进行离线语音识别。",
     "NSAppleEventsUsageDescription": "SAI 需要发送通知或打开文件夹。",
     "NSHighResolutionCapable": True,
-    "LSMinimumSystemVersion": "12.0",
+    # 最低系统：随包分发的 onnxruntime 1.23.2 要求 13.0，llama.cpp 运行库（GGUF 引擎）目标为 13.3
+    "LSMinimumSystemVersion": "13.3",
 }
 
 app = BUNDLE(

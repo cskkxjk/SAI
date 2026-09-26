@@ -25,8 +25,10 @@ from core.client.udp.udp_broadcaster import broadcast_output_udp
 from core.tools.zhconv import convert as zhconv_convert
 from core.client.audio.file_manager import AudioFileManager
 from core.client.llm.llm_write_md import write_llm_md
+from core.client.voice_phrase.replace import apply_replacements
 
 if TYPE_CHECKING:
+    from core.client.connection.websocket_manager import WebSocketManager
     from core.client.state import ClientState
     from core.client.app import SaiClient
     from core.client.hotword.manager import HotwordManager
@@ -170,7 +172,7 @@ class ResultProcessor:
                     logger.debug(f"连接异常中断: {e}")
                     break
 
-            console.print(f'[bold red]已断开服务端连接[/bold red]\n')
+            console.print('[bold red]已断开服务端连接[/bold red]\n')
             self._cleanup()
             
 
@@ -178,6 +180,11 @@ class ResultProcessor:
         """处理接收到的消息"""
         if message is None:
             return
+        # 语音短语匹配由本次任务的终态消息统一消费（含错误/空白结果），避免残留
+        voice_matches = (
+            self.state.pop_voice_matches(message.task_id)
+            if message.is_final else []
+        )
         message_error = getattr(message, "error", "")
         if message_error:
             logger.error(message_error)
@@ -217,7 +224,32 @@ class ResultProcessor:
             self.state.pop_audio_file(message.task_id)
             return
 
-        # 繁体转换
+        # 0. 语音短语替换（音频层命中，优先级最高）
+        #    必须放在繁体转换之前：tokens 来自服务端 text_accu（简体），
+        #    文本先转成繁体后 token 在文中的定位会失败。
+        if voice_matches:
+            try:
+                text, voice_applied = apply_replacements(
+                    text, message.tokens, message.timestamps, voice_matches,
+                    accu_text=getattr(message, "text_accu", "") or "",
+                )
+            except Exception as e:
+                voice_applied = []
+                logger.warning(f"语音短语替换失败: {e}")
+            if voice_applied:
+                summary = "、".join(match.text for match in voice_applied)
+                console.print(f'    语音短语：[magenta]{summary}[/]')
+                logger.info(f"语音短语替换: {summary}")
+                if Config.voice_phrase_hint:
+                    try:
+                        from core.client.ui import toast
+                        toast(f"语音短语替换：{summary}", duration=2000)
+                    except Exception as e:
+                        logger.debug(f"语音短语提示失败: {e}")
+            else:
+                logger.debug("语音短语命中但未能定位文本区间，已跳过替换")
+
+        # 繁体转换（放在语音短语替换之后，见上）
         if Config.traditional_convert:
             try:
                 text = zhconv_convert(text, Config.traditional_locale)

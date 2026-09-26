@@ -9,15 +9,19 @@
 4. hold_mode 和 click_mode 支持
 """
 from __future__ import annotations
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from pynput import keyboard, mouse
 
 from . import logger
-from core.shortcut_keys import canonical_key, combo_active, matching_names, normalize_part
+from core.shortcut_keys import (canonical_key, combo_active,
+                                darwin_suppress_intercept, matching_names,
+                                normalize_part)
 from core.client.shortcut.key_mapper import *
 from core.client.shortcut.key_mapper import KeyMapper
 from core.client.shortcut.emulator import ShortcutEmulator
@@ -29,6 +33,13 @@ if TYPE_CHECKING:
     from core.client.shortcut.shortcut_config import Shortcut
     from core.client.state import ClientState
     from core.client.app import SaiClient
+
+
+# 图形界面在「语音短语」页录音时写入的占用标记
+CAPTURE_FLAG_NAME = "voice-capture.flag"
+# 标记文件超时时间（秒）。图形界面每 30 秒刷新一次 ts，超过该时长说明
+# 启动器被强杀/卡死，残留标记不能再占用客户端的麦克风与录音键
+CAPTURE_FLAG_MAX_AGE = 120.0
 
 
 
@@ -76,6 +87,15 @@ class ShortcutManager:
         self._config_stop: Optional[threading.Event] = None
         self._config_signature = self._signature(shortcuts)
 
+        # 图形界面录制语音短语时暂停触发（标记文件由启动器写入）
+        self.capture_hold = False
+        self._capture_flag = self._capture_flag_path()
+        self._capture_mic_lock = threading.Lock()
+        self._capture_mic_state = None
+
+        # macOS：darwin_intercept 的屏蔽标记（回调先打标记，拦截器再消费）
+        self.darwin_suppress = False
+
         # 初始化快捷键任务
         self._init_tasks()
 
@@ -100,7 +120,7 @@ class ShortcutManager:
 
     # ========== 热重载 ==========
 
-    CONFIG_POLL_INTERVAL = 1.0
+    CONFIG_POLL_INTERVAL = 0.5
 
     @staticmethod
     def _signature(shortcuts: List[Shortcut]) -> tuple:
@@ -108,7 +128,8 @@ class ShortcutManager:
         return tuple(
             (shortcut.key, shortcut.type, bool(shortcut.enabled),
              bool(shortcut.suppress), bool(shortcut.hold_mode),
-             bool(getattr(shortcut, 'paste', False)))
+             bool(getattr(shortcut, 'paste', False)),
+             getattr(shortcut, 'threshold', None))
             for shortcut in shortcuts
         )
 
@@ -162,6 +183,10 @@ class ShortcutManager:
                 self._poll_config()
             except Exception as exc:
                 logger.debug(f"检查快捷键配置变化失败: {exc}")
+            try:
+                self._poll_capture_hold()
+            except Exception as exc:
+                logger.debug(f"检查语音短语录制标记失败: {exc}")
 
     def _poll_config(self) -> bool:
         """对比配置文件与当前快捷键，必要时热重载；返回是否发生重载"""
@@ -174,6 +199,96 @@ class ShortcutManager:
         logger.info("检测到 config_gui.json 变化，正在热重载快捷键")
         self.reload(shortcuts)
         return True
+
+    @staticmethod
+    def _capture_flag_path():
+        try:
+            from core.runtime_paths import DATA_DIR
+        except Exception:
+            return None
+        return Path(DATA_DIR) / "logs" / CAPTURE_FLAG_NAME
+
+    def _poll_capture_hold(self) -> bool:
+        """图形界面正在录制语音短语时暂停快捷键触发。
+
+        标记文件由启动器写入，录制结束即删除；启动器被强杀留下的
+        残留标记会在检测到进程不存在时清理。
+        """
+        active = self._read_capture_hold()
+        if active != self.capture_hold:
+            self.capture_hold = active
+            self._apply_capture_hold(active)
+        return active
+
+    def _read_capture_hold(self) -> bool:
+        path = self._capture_flag
+        if path is None or not path.exists():
+            return False
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = None
+        # 半截/损坏的标记视为无效：宁可放行快捷键，也不能一直占着麦克风
+        if not isinstance(payload, dict):
+            self._clear_capture_flag(path)
+            return False
+        try:
+            age = time.time() - float(payload.get("ts") or 0)
+        except (TypeError, ValueError):
+            age = CAPTURE_FLAG_MAX_AGE + 1
+        if age < 0 or age > CAPTURE_FLAG_MAX_AGE:
+            self._clear_capture_flag(path)
+            return False
+        pid = payload.get("pid")
+        if pid and not self._process_alive(pid):
+            self._clear_capture_flag(path)
+            return False
+        return True
+
+    @staticmethod
+    def _clear_capture_flag(path: Path) -> None:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+    def _apply_capture_hold(self, active: bool):
+        """录制语音短语时让客户端让出麦克风，避免两条输入流互相干扰。"""
+        stream = getattr(self.app, "stream", None)
+        if stream is None:
+            return None
+
+        def work():
+            # 串行执行，避免快速切换时挂起/恢复乱序
+            with self._capture_mic_lock:
+                if self._capture_mic_state == active:
+                    return
+                self._capture_mic_state = active
+                try:
+                    if active:
+                        stream.suspend_for_capture()
+                    else:
+                        stream.resume_after_capture()
+                except Exception as exc:
+                    logger.debug(f"语音短语录制时调整麦克风失败: {exc}")
+
+        thread = threading.Thread(target=work, name="voice-capture-mic", daemon=True)
+        thread.start()
+        return thread
+
+    @staticmethod
+    def _process_alive(pid) -> bool:
+        try:
+            import psutil
+            return psutil.pid_exists(int(pid))
+        except Exception:
+            return True
+
+    def _capture_hold_active(self) -> bool:
+        """录制标记是否生效：直接查文件，消除轮询间隙。"""
+        if self._capture_flag is None:
+            return self.capture_hold
+        return self._poll_capture_hold()
 
     def _combo_active(self, parts) -> bool:
         return combo_active(parts, self._pressed_keys)
@@ -202,9 +317,17 @@ class ShortcutManager:
                     if task.shortcut.type != "keyboard":
                         continue
                     parts = [normalize_part(part) for part in task.shortcut.key.split("+")]
-                    if self._combo_active(parts):
-                        self._event_handler.handle_keydown(task.shortcut.key, task)
-                        matched.append(task)
+                    # 只有本次按下的键属于该快捷键时才处理：长按录音键期间
+                    # 再按其它键不应重复触发，也不能把它一起吞掉
+                    if not any(key_name in matching_names(part) for part in parts):
+                        continue
+                    if not self._combo_active(parts):
+                        continue
+                    # 语音短语录制中：不触发新的录音（已开始的录音仍能正常收尾）
+                    if self._capture_hold_active():
+                        continue
+                    self._event_handler.handle_keydown(task.shortcut.key, task)
+                    matched.append(task)
                 suppress = any(task.shortcut.suppress for task in matched)
             elif msg in KEY_UP_MESSAGES:
                 matched = []
@@ -232,22 +355,32 @@ class ShortcutManager:
     def _keyboard_press(self, key):
         key_name = canonical_key(self._key_to_name(key))
         self._pressed_keys.add(key_name)
+        suppress = False
         for shortcut_key, task in tuple(self.tasks.items()):
             if task.shortcut.type != "keyboard":
                 continue
             parts = [normalize_part(part) for part in shortcut_key.split("+")]
-            if self._combo_active(parts):
+            # 同 Win32 过滤器：本次按键与快捷键无关时不要置 darwin_suppress，
+            # 否则长按录音键期间其它按键会被系统级吞掉
+            if not any(key_name in matching_names(part) for part in parts):
+                continue
+            if self._combo_active(parts) and not self._capture_hold_active():
                 self._event_handler.handle_keydown(shortcut_key, task)
+                suppress = suppress or task.shortcut.suppress
+        self.darwin_suppress = suppress
 
     def _keyboard_release(self, key):
         key_name = canonical_key(self._key_to_name(key))
+        suppress = False
         for shortcut_key, task in tuple(self.tasks.items()):
             if task.shortcut.type != "keyboard":
                 continue
             parts = [normalize_part(part) for part in shortcut_key.split("+")]
             if any(key_name in matching_names(part) for part in parts) and task.pressed:
                 self._event_handler.handle_keyup(shortcut_key, task)
+                suppress = suppress or task.shortcut.suppress
         self._pressed_keys.discard(key_name)
+        self.darwin_suppress = suppress
 
     @staticmethod
     def _key_to_name(key) -> str:
@@ -281,12 +414,13 @@ class ShortcutManager:
 
             # 处理鼠标事件
             if msg in (WM_XBUTTONDOWN, WM_MBUTTONDOWN):
-                self._event_handler.handle_keydown(button_name, task)
+                if not self._capture_hold_active():
+                    self._event_handler.handle_keydown(button_name, task)
             elif msg in (WM_XBUTTONUP, WM_MBUTTONUP):
                 self._handle_mouse_keyup(button_name, task)
 
-            # 阻塞事件
-            if task.shortcut.suppress and self.mouse_listener:
+            # 阻塞事件；语音短语录制中不阻塞，让启动器监听录音键
+            if task.shortcut.suppress and self.mouse_listener and not self.capture_hold:
                 self.mouse_listener.suppress_event()
 
             return True
@@ -398,9 +532,12 @@ class ShortcutManager:
                         win32_event_filter=self.create_keyboard_filter()
                     )
                 else:
+                    options = ({'darwin_intercept': darwin_suppress_intercept(self)}
+                               if __import__('sys').platform == 'darwin' else {})
                     self.keyboard_listener = keyboard.Listener(
                         on_press=self._keyboard_press,
                         on_release=self._keyboard_release,
+                        **options
                     )
                 self.keyboard_listener.start()
                 logger.info("键盘监听器已启动")
@@ -414,8 +551,11 @@ class ShortcutManager:
                         win32_event_filter=self.create_mouse_filter()
                     )
                 else:
+                    options = ({'darwin_intercept': darwin_suppress_intercept(self)}
+                               if __import__('sys').platform == 'darwin' else {})
                     self.mouse_listener = mouse.Listener(
-                        on_click=self._mouse_click
+                        on_click=self._mouse_click,
+                        **options
                     )
                 self.mouse_listener.start()
                 logger.info("鼠标监听器已启动")
@@ -433,9 +573,13 @@ class ShortcutManager:
             return
         task = self.tasks[button_name]
         if pressed:
+            if self._capture_hold_active():
+                self.darwin_suppress = False
+                return
             self._event_handler.handle_keydown(button_name, task)
         else:
             self._handle_mouse_keyup(button_name, task)
+        self.darwin_suppress = task.shortcut.suppress and not self.capture_hold
 
     def stop(self) -> None:
         """停止所有监听器和清理资源"""

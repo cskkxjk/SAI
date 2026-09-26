@@ -1,6 +1,6 @@
 [project]
 name = "sai"
-version = "1.0.5"
+version = "1.0.6"
 description = "SAI 离线语音输入工具"
 requires-python = ">=3.13,<3.15"
 
@@ -12,9 +12,9 @@ dependencies = [
     "numpy",
     "gguf",
     "onnxruntime-directml; sys_platform == 'win32'",
-    # Intel Mac 官方轮子止步 1.23.2（Py3.13），Apple Silicon 用最新版
-    "onnxruntime==1.23.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "onnxruntime; sys_platform == 'darwin' and platform_machine != 'x86_64'",
+    # macOS 统一固定 1.23.2（官方最后一个同时提供 Intel / Apple Silicon 轮子的版本，要求 macOS 13.0）：
+    # Intel 更高版本没有 x86_64 轮子；Apple Silicon 用最新版（1.30）会要求 macOS 14
+    "onnxruntime==1.23.2; sys_platform == 'darwin'",
     "onnxruntime; sys_platform != 'win32' and sys_platform != 'darwin'",
     "sentencepiece",
     "soundfile",
