@@ -698,11 +698,14 @@ class ShortcutHotReloadTests(unittest.TestCase):
             flag = Path(folder) / "voice-capture.flag"
             manager._capture_flag = flag
             self.assertFalse(manager._poll_capture_hold())
-            flag.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+            flag.write_text(json.dumps({"pid": os.getpid(), "ts": time.time()}),
+                            encoding="utf-8")
             self.assertTrue(manager._poll_capture_hold())
             self.assertTrue(manager.capture_hold)
-            flag.write_text(json.dumps({"pid": 999999999}), encoding="utf-8")
-            self.assertFalse(manager._poll_capture_hold())
+            flag.write_text(json.dumps({"pid": 999999999, "ts": time.time()}),
+                            encoding="utf-8")
+            with patch.object(manager, "_process_alive", return_value=False):
+                self.assertFalse(manager._poll_capture_hold())
             self.assertFalse(manager.capture_hold)
             self.assertFalse(flag.exists())
 
@@ -714,10 +717,35 @@ class ShortcutHotReloadTests(unittest.TestCase):
             flag = Path(folder) / "voice-capture.flag"
             manager._capture_flag = flag
             self.assertFalse(manager._capture_hold_active())
-            flag.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+            flag.write_text(json.dumps({"pid": os.getpid(), "ts": time.time()}),
+                            encoding="utf-8")
             self.assertTrue(manager._capture_hold_active())
-            flag.write_text(json.dumps({"pid": 999999999}), encoding="utf-8")
-            self.assertFalse(manager._capture_hold_active())
+            flag.write_text(json.dumps({"pid": 999999999, "ts": time.time()}),
+                            encoding="utf-8")
+            with patch.object(manager, "_process_alive", return_value=False):
+                self.assertFalse(manager._capture_hold_active())
+
+    def test_capture_flag_stale_or_corrupt_is_ignored(self):
+        """半截 JSON 或 ts 超时的残留标记按无效处理，并顺手清理。"""
+        from core.client.shortcut.shortcut_config import Shortcut
+        manager = self._manager([Shortcut(key="caps_lock")])
+        with tempfile.TemporaryDirectory() as folder:
+            flag = Path(folder) / "voice-capture.flag"
+            manager._capture_flag = flag
+            flag.write_text('{"pid": 1', encoding="utf-8")
+            self.assertFalse(manager._poll_capture_hold())
+            self.assertFalse(flag.exists())
+            flag.write_text(json.dumps({"pid": os.getpid(), "ts": 1.0}),
+                            encoding="utf-8")
+            self.assertFalse(manager._poll_capture_hold())
+            self.assertFalse(flag.exists())
+
+    def test_signature_detects_threshold_changes(self):
+        from core.client.shortcut.shortcut_config import Shortcut
+        from core.client.shortcut.shortcut_manager import ShortcutManager
+        first = ShortcutManager._signature([Shortcut(key="caps_lock")])
+        second = ShortcutManager._signature([Shortcut(key="caps_lock", threshold=0.8)])
+        self.assertNotEqual(first, second)
 
     def test_capture_hold_releases_and_restores_the_microphone(self):
         """录制语音短语期间客户端让出常开的麦克风。"""
@@ -758,8 +786,7 @@ class ShortcutHotReloadTests(unittest.TestCase):
         state.stream.close.assert_not_called()
 
     def test_capture_hold_ignores_new_triggers(self):
-        from core.client.shortcut.shortcut_manager import (
-            ShortcutManager, WM_KEYDOWN, WM_KEYUP)
+        from core.client.shortcut.shortcut_manager import WM_KEYDOWN, WM_KEYUP
         from core.client.shortcut.shortcut_config import Shortcut
 
         class Recorder:
@@ -792,6 +819,40 @@ class ShortcutHotReloadTests(unittest.TestCase):
         manager.capture_hold = False
         event_filter(WM_KEYDOWN, SimpleNamespace(vkCode=0x14))
         self.assertEqual(manager._event_handler.events, [("down", "caps_lock")])
+
+    def test_holding_a_suppressing_shortcut_does_not_swallow_other_keys(self):
+        from core.client.shortcut.shortcut_manager import WM_KEYDOWN, WM_KEYUP
+        from core.client.shortcut.shortcut_config import Shortcut
+
+        class Recorder:
+            def __init__(self):
+                self.events = []
+
+            def handle_keydown(self, key_name, task):
+                task.pressed = True
+                self.events.append(("down", key_name))
+
+        manager = ShortcutHotReloadTests._manager([])
+        manager.tasks.clear()
+        manager.tasks["caps_lock"] = SimpleNamespace(
+            shortcut=Shortcut(key="caps_lock", suppress=True),
+            pressed=False, released=True)
+        manager._pressed_keys = set()
+        manager._capture_flag = None
+        manager.keyboard_listener = Mock()
+        manager._event_handler = Recorder()
+        event_filter = manager.create_keyboard_filter()
+
+        event_filter(WM_KEYDOWN, SimpleNamespace(vkCode=0x14))    # CapsLock
+        self.assertEqual(manager._event_handler.events, [("down", "caps_lock")])
+        self.assertEqual(manager.keyboard_listener.suppress_event.call_count, 1)
+
+        event_filter(WM_KEYDOWN, SimpleNamespace(vkCode=0x41))    # A
+        self.assertEqual(manager._event_handler.events, [("down", "caps_lock")])
+        self.assertEqual(manager.keyboard_listener.suppress_event.call_count, 1)
+
+        event_filter(WM_KEYUP, SimpleNamespace(vkCode=0x41))
+        self.assertEqual(manager.keyboard_listener.suppress_event.call_count, 1)
 
 
 class DarwinSuppressTests(unittest.TestCase):
@@ -855,6 +916,18 @@ class DarwinSuppressTests(unittest.TestCase):
         manager._keyboard_press(keyboard.Key.space)
         self.assertFalse(manager.darwin_suppress)
         self.assertEqual(manager._event_handler.events, [])
+
+    def test_other_keys_are_not_suppressed_while_the_recording_key_is_held(self):
+        """长按录音键期间按其它键：不重复触发，也不能被系统级吞掉。"""
+        from pynput import keyboard
+        from core.client.shortcut.shortcut_config import Shortcut
+        manager = self._manager([Shortcut(key="caps_lock", suppress=True)])
+        manager._event_handler = self._recorder()
+        manager._keyboard_press(keyboard.Key.caps_lock)
+        self.assertTrue(manager.darwin_suppress)
+        manager._keyboard_press(keyboard.KeyCode.from_char("a"))
+        self.assertFalse(manager.darwin_suppress)
+        self.assertEqual(manager._event_handler.events, [("down", "caps_lock")])
 
     def test_mouse_callback_respects_capture_hold(self):
         from core.client.shortcut.shortcut_config import Shortcut
@@ -958,8 +1031,7 @@ class SidedShortcutKeyTests(unittest.TestCase):
             self.assertEqual(key_obj.name, pynput_name)
 
     def test_keyboard_filter_triggers_only_the_matching_side(self):
-        from core.client.shortcut.shortcut_manager import (
-            ShortcutManager, WM_KEYDOWN, WM_KEYUP)
+        from core.client.shortcut.shortcut_manager import WM_KEYDOWN, WM_KEYUP
         from core.client.shortcut.shortcut_config import Shortcut
 
         class Recorder:
@@ -1007,7 +1079,7 @@ class SidedShortcutKeyTests(unittest.TestCase):
 
     def test_mouse_middle_button_is_matched(self):
         from core.client.shortcut.shortcut_manager import (
-            ShortcutManager, WM_MBUTTONDOWN, WM_MBUTTONUP, XBUTTON1, WM_XBUTTONDOWN)
+            WM_MBUTTONDOWN, WM_MBUTTONUP, XBUTTON1, WM_XBUTTONDOWN)
         from core.client.shortcut.shortcut_config import Shortcut
 
         class Recorder:

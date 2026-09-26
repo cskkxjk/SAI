@@ -822,7 +822,7 @@ class Launcher(tk.Tk):
             form, row, self.vars["auto_check_update"], "自动检查更新",
             "启动后查询 GitHub 发布页；有新版本时在左上角 SAI 旁显示 new 徽标。")
         row = self._switch_row(
-            form, row, self.vars["voice_phrase"], "语音短语替换",
+            form, row, self.vars["voice_phrase"], "语音短语替换（测试中）",
             "录音结束后匹配已录入的语音短语并整体替换（在「热词与替换」页录制）。")
         version_row = ttk.Frame(form, style="Card.TFrame")
         version_row.grid(row=row, column=0, columnspan=2, sticky="ew",
@@ -1850,6 +1850,8 @@ class Launcher(tk.Tk):
                 # 启动完成后就不再需要标记文件
                 for ready in self.ready_files.values():
                     ready.unlink(missing_ok=True)
+        # 启动完成后不再自动最小化到托盘（旧版行为）：语音短语页需要窗口
+        # 可见/可聚焦才能接管录音键；用户仍可手动最小化，托盘图标照常工作
         self._refresh_recording_indicator()
         if self.processes:
             self.monitor = self.after(500, self._check_children)

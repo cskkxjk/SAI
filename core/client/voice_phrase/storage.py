@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import soundfile as sf
 
+from core import get_logger
 from core.client.voice_phrase.features import (
     FEATURE_VERSION,
     SAMPLE_RATE,
@@ -25,6 +26,8 @@ from core.client.voice_phrase.features import (
     trim_silence,
 )
 from core.client.voice_phrase.matcher import PhraseTemplate
+
+logger = get_logger('client')
 
 INDEX_NAME = "voice-phrases.json"
 INDEX_VERSION = 1
@@ -48,7 +51,8 @@ class VoicePhraseStore:
             return []
         try:
             data = json.loads(self.index_path.read_text("utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            logger.warning(f"语音短语索引读取失败，按空索引处理: {exc}")
             return []
         items = data.get("items") if isinstance(data, dict) else data
         if not isinstance(items, list):
@@ -58,7 +62,10 @@ class VoicePhraseStore:
     def _write_index(self, items: List[Dict]) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         payload = {"version": INDEX_VERSION, "items": items}
-        self.index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), "utf-8")
+        # 原子替换：图形界面与客户端（语音测试）可能并发读写，避免读到半截文件
+        temp = self.index_path.with_name(INDEX_NAME + ".tmp")
+        temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), "utf-8")
+        temp.replace(self.index_path)
 
     # ------------------------------------------------------------------ 增删
     def add(self, text: str, samples, created_at: Optional[str] = None,
@@ -98,7 +105,6 @@ class VoicePhraseStore:
             "text": text,
             "created_at": created_at or time.strftime("%Y-%m-%d %H:%M:%S"),
             "samples": files,
-            "feature_version": FEATURE_VERSION,
         }
         items.append(item)
         self._write_index(items)

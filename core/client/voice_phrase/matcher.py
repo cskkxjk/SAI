@@ -18,7 +18,6 @@ from core.client.voice_phrase.features import (
     mfcc,
     resample_feature,
     speech_bounds,
-    trim_silence,
 )
 
 try:
@@ -42,7 +41,6 @@ SEGMENT_COUNT = 4
 COARSE_TOP_K = 5
 COARSE_HOP_SEC = 0.05
 SPAN_PAD_SEC = 0.3
-LENGTH_TOLERANCE = 1.3
 RATE_PAD_FRAMES = 35
 
 
@@ -53,12 +51,7 @@ class PhraseTemplate:
     phrase_id: str
     text: str
     feature: np.ndarray
-    duration: float = 0.0
     sample_index: int = 1
-
-    def __post_init__(self):
-        if not self.duration:
-            self.duration = self.feature.shape[0] * 0.01
 
 
 @dataclass
@@ -103,47 +96,6 @@ def _dtw_subsequence_end(template: np.ndarray, window: np.ndarray):
             best_end = prev[j]
             best_j = j
     return float(best_end) / n, best_j
-
-
-@njit(cache=True)
-def _dtw_subsequence(template: np.ndarray, window: np.ndarray) -> float:
-    """模板在窗口内的子序列 DTW（起点终点自由），按模板长度归一。"""
-    n, dim = template.shape[0], template.shape[1]
-    m = window.shape[0]
-    inf = np.float32(1e9)
-    prev = np.zeros(m + 1, dtype=np.float32)
-    curr = np.empty(m + 1, dtype=np.float32)
-    for i in range(1, n + 1):
-        curr[0] = inf
-        for j in range(1, m + 1):
-            dist = np.float32(0.0)
-            for k in range(dim):
-                diff = template[i - 1, k] - window[j - 1, k]
-                dist += diff * diff
-            dist = dist ** np.float32(0.5)
-            best = prev[j - 1]
-            if prev[j] < best:
-                best = prev[j]
-            if curr[j - 1] < best:
-                best = curr[j - 1]
-            curr[j] = dist + best
-        prev, curr = curr, prev
-    best_end = prev[1]
-    for j in range(2, m + 1):
-        if prev[j] < best_end:
-            best_end = prev[j]
-    return float(best_end) / n
-
-
-def dtw_distance(a: np.ndarray, b: np.ndarray) -> float:
-    """模板 a 在窗口 b 中的子序列 DTW 距离（越小越相似）。"""
-    a = np.asarray(a, dtype=np.float32)
-    b = np.asarray(b, dtype=np.float32)
-    if a.ndim != 2 or b.ndim != 2 or not a.shape[0] or not b.shape[0]:
-        return float("inf")
-    if b.shape[0] < a.shape[0]:
-        return float("inf")
-    return _dtw_subsequence(a, b)
 
 
 def _segment_means(feature: np.ndarray, count: int = SEGMENT_COUNT) -> Optional[np.ndarray]:
@@ -320,17 +272,13 @@ def score_candidates(
             for start in _coarse_starts(feature, tpl.feature, top_k):
                 win_lo = max(0, start - RATE_PAD_FRAMES)
                 win_hi = min(feature.shape[0], start + n + RATE_PAD_FRAMES)
+                # 起点范围（start + n <= total）与前后 pad 保证窗口不短于模板，
+                # 无需再做压缩模板的等长对齐
                 window = feature[win_lo:win_hi]
-                if window.shape[0] < 8:
-                    continue
-                tpl_feature = tpl.feature
-                if window.shape[0] < n:
-                    # 说得比样本快：压缩模板后再比
-                    tpl_feature = resample_feature(tpl.feature, window.shape[0])
-                score, end = _dtw_subsequence_end(tpl_feature, window)
+                score, end = _dtw_subsequence_end(tpl.feature, window)
                 candidates.append(_make_match(
                     tpl, score, lo + trim_start, window, end,
-                    tpl_feature.shape[0], frame_offset=win_lo))
+                    n, frame_offset=win_lo))
     return candidates
 
 

@@ -4,10 +4,16 @@
 匹配得到的是音频时间区间，需要借助服务端返回的 token 时间戳
 定位到识别文本中的字符区间；token 与文本对不上时（缺 token、
 文本被改写等）跳过该条替换。
+
+token/timestamps 由服务端对齐在 text_accu 上，而客户端输出用的是
+text（简单拼接）。两者不一致时（重叠分段、模糊合并等）先在
+text_accu 上定位 token，再用 difflib 映射回 text，避免定位到错误的
+重复词位置。
 """
 
 from __future__ import annotations
 
+import difflib
 from typing import List, Optional, Sequence, Tuple
 
 from core.client.voice_phrase.matcher import PhraseMatch
@@ -70,14 +76,79 @@ def _locate_tokens(
     return positions
 
 
+def _map_index(index: int, opcodes, target_len: int) -> int:
+    """把 source 文本中的字符下标映射到 target 文本（difflib opcodes）。"""
+    for tag, i1, i2, j1, j2 in opcodes:
+        if i1 <= index < i2:
+            if tag == "delete":
+                return j1
+            if tag == "equal" or (i2 - i1) == (j2 - j1):
+                return j1 + (index - i1)
+            ratio = (index - i1) / (i2 - i1)
+            return min(j2, j1 + int(round(ratio * (j2 - j1))))
+    return target_len
+
+
+def _map_spans(
+    spans: Sequence[Optional[Tuple[int, int]]],
+    opcodes,
+    target_len: int,
+) -> List[Optional[Tuple[int, int]]]:
+    """把 source 上的字符区间映射到 target；映射后为空的区间返回 None。"""
+    mapped: List[Optional[Tuple[int, int]]] = []
+    for span in spans:
+        if span is None:
+            mapped.append(None)
+            continue
+        start = _map_index(span[0], opcodes, target_len)
+        end = _map_index(span[1], opcodes, target_len)
+        mapped.append((start, end) if end > start else None)
+    return mapped
+
+
+def _locate_in_source(
+    tokens: Sequence[str],
+    source: str,
+    target: str,
+    hint: Optional[int],
+) -> List[Optional[Tuple[int, int]]]:
+    """在 token 所属文本 source 上定位；source != target 时映射回 target。"""
+    positions = _locate_tokens(tokens, source, hint)
+    if source == target:
+        return positions
+    opcodes = difflib.SequenceMatcher(None, source, target, autojunk=False).get_opcodes()
+    return _map_spans(positions, opcodes, len(target))
+
+
+def _bounds(
+    positions: Sequence[Optional[Tuple[int, int]]],
+    indices: Sequence[int],
+) -> Optional[Tuple[int, int]]:
+    """取命中 token 在文本中的整体区间（首 token 起、末 token 止）。"""
+    first = next((positions[index] for index in indices if positions[index]), None)
+    last = next((positions[index] for index in reversed(indices)
+                 if positions[index]), None)
+    if not first or not last or first[0] >= last[1]:
+        return None
+    return first[0], last[1]
+
+
 def apply_replacements(
     text: str,
     tokens: Sequence[str],
     timestamps: Sequence[float],
     matches: Sequence[PhraseMatch],
     tolerance: float = DEFAULT_TOLERANCE,
+    accu_text: str = "",
 ) -> Tuple[str, List[PhraseMatch]]:
     """按音频命中把 text 中对应区间替换为短语标注文字。
+
+    Args:
+        text: 实际输出/替换用的文本（服务端简单拼接结果）
+        tokens/timestamps: 服务端 token 及其起始时间（对齐在 accu_text 上）
+        matches: 音频层命中的短语区间
+        tolerance: token 区间匹配的容差（秒）
+        accu_text: token 所属的精确文本（text_accu），空则退回 text
 
     Returns:
         (替换后的文本, 实际生效的命中列表)
@@ -87,6 +158,7 @@ def apply_replacements(
     if not tokens or not timestamps or len(tokens) != len(timestamps):
         return text, []
 
+    base_text = accu_text or text
     token_spans = _token_spans(timestamps)
     total = float(timestamps[-1])
     candidates: List[Tuple[int, int, PhraseMatch]] = []
@@ -98,13 +170,16 @@ def apply_replacements(
         hint = None
         if total > 0:
             ratio = min(1.0, max(0.0, match.start / total))
-            hint = max(0, int(len(text) * ratio) - 8)
-        positions = _locate_tokens(tokens, text, hint)
-        first = next((positions[i] for i in indices if positions[i]), None)
-        last = next((positions[i] for i in reversed(indices) if positions[i]), None)
-        if not first or not last or first[0] >= last[1]:
+            hint = max(0, int(len(base_text) * ratio) - 8)
+        positions = _locate_in_source(tokens, base_text, text, hint)
+        bounds = _bounds(positions, indices)
+        if bounds is None and base_text != text:
+            # accu 对齐映射失败时退回直接在 text 上定位（与旧行为一致）
+            positions = _locate_tokens(tokens, text, hint)
+            bounds = _bounds(positions, indices)
+        if bounds is None:
             continue
-        candidates.append((first[0], last[1], match))
+        candidates.append((bounds[0], bounds[1], match))
 
     if not candidates:
         return text, []

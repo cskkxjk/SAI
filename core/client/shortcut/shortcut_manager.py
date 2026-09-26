@@ -37,6 +37,9 @@ if TYPE_CHECKING:
 
 # 图形界面在「语音短语」页录音时写入的占用标记
 CAPTURE_FLAG_NAME = "voice-capture.flag"
+# 标记文件超时时间（秒）。图形界面每 30 秒刷新一次 ts，超过该时长说明
+# 启动器被强杀/卡死，残留标记不能再占用客户端的麦克风与录音键
+CAPTURE_FLAG_MAX_AGE = 120.0
 
 
 
@@ -125,7 +128,8 @@ class ShortcutManager:
         return tuple(
             (shortcut.key, shortcut.type, bool(shortcut.enabled),
              bool(shortcut.suppress), bool(shortcut.hold_mode),
-             bool(getattr(shortcut, 'paste', False)))
+             bool(getattr(shortcut, 'paste', False)),
+             getattr(shortcut, 'threshold', None))
             for shortcut in shortcuts
         )
 
@@ -223,15 +227,30 @@ class ShortcutManager:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            payload = {}
-        pid = payload.get("pid") if isinstance(payload, dict) else None
+            payload = None
+        # 半截/损坏的标记视为无效：宁可放行快捷键，也不能一直占着麦克风
+        if not isinstance(payload, dict):
+            self._clear_capture_flag(path)
+            return False
+        try:
+            age = time.time() - float(payload.get("ts") or 0)
+        except (TypeError, ValueError):
+            age = CAPTURE_FLAG_MAX_AGE + 1
+        if age < 0 or age > CAPTURE_FLAG_MAX_AGE:
+            self._clear_capture_flag(path)
+            return False
+        pid = payload.get("pid")
         if pid and not self._process_alive(pid):
-            try:
-                path.unlink()
-            except OSError:
-                pass
+            self._clear_capture_flag(path)
             return False
         return True
+
+    @staticmethod
+    def _clear_capture_flag(path: Path) -> None:
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
     def _apply_capture_hold(self, active: bool):
         """录制语音短语时让客户端让出麦克风，避免两条输入流互相干扰。"""
@@ -298,6 +317,10 @@ class ShortcutManager:
                     if task.shortcut.type != "keyboard":
                         continue
                     parts = [normalize_part(part) for part in task.shortcut.key.split("+")]
+                    # 只有本次按下的键属于该快捷键时才处理：长按录音键期间
+                    # 再按其它键不应重复触发，也不能把它一起吞掉
+                    if not any(key_name in matching_names(part) for part in parts):
+                        continue
                     if not self._combo_active(parts):
                         continue
                     # 语音短语录制中：不触发新的录音（已开始的录音仍能正常收尾）
@@ -337,6 +360,10 @@ class ShortcutManager:
             if task.shortcut.type != "keyboard":
                 continue
             parts = [normalize_part(part) for part in shortcut_key.split("+")]
+            # 同 Win32 过滤器：本次按键与快捷键无关时不要置 darwin_suppress，
+            # 否则长按录音键期间其它按键会被系统级吞掉
+            if not any(key_name in matching_names(part) for part in parts):
+                continue
             if self._combo_active(parts) and not self._capture_hold_active():
                 self._event_handler.handle_keydown(shortcut_key, task)
                 suppress = suppress or task.shortcut.suppress

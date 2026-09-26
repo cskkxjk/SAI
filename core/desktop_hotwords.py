@@ -21,7 +21,6 @@ class HotwordEditor(ttk.Frame):
     def __init__(self, parent, root, voice_store=None, client=None):
         super().__init__(parent, style="Page.TFrame")
         self.root = Path(root)
-        self.client = client
         self.originals = {}
         self.editors = {}
         self.names = ("hot.txt", "hot-rule.txt")
@@ -65,7 +64,7 @@ class HotwordEditor(ttk.Frame):
             loading=getattr(client, "recognition_loading", None),
             on_recording=getattr(client, "set_phrase_recording", None),
             on_mode_change=self._sync_voice_test_ui)
-        self.tabs.add(self.voice_panel, text="语音短语")
+        self.tabs.add(self.voice_panel, text="语音短语（测试中）")
         self._refresh_table()
         self.tabs.bind("<<NotebookTabChanged>>", self._tab_changed)
         self.tabs.pack(fill="both", expand=True)

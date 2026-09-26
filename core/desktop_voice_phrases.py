@@ -32,7 +32,10 @@ MAX_PHRASES = 50
 SILENCE_PEAK = 0.001
 LOW_VOLUME_PEAK = 0.05
 POLL_MS = 25
-DEFAULT_SHORTCUT = {"key": "caps_lock", "type": "keyboard"}
+FLAG_REFRESH_MS = 30000  # 占用标记 ts 刷新间隔（客户端超过 120s 视为残留）
+# 面板兜底录音键：macOS 的 CapsLock 只发瞬时事件、无法按住说话，退回右 Option
+DEFAULT_SHORTCUT = {"key": "alt_r" if sys.platform == "darwin" else "caps_lock",
+                    "type": "keyboard"}
 CAPTURE_FLAG = DATA_DIR / "logs" / "voice-capture.flag"
 
 
@@ -340,6 +343,7 @@ class VoiceCapture:
         self._stream_rate = SAMPLE_RATE
         self._open_queue = queue.Queue()
         self._open_job = None
+        self._open_generation = 0
         self._opening = False
         self._open_error = None
         self._chunks = []
@@ -347,6 +351,7 @@ class VoiceCapture:
         self._started = 0.0
         self._timer = None
         self._armed = False
+        self._flag_job = None
         self._recording = False
         self._key_down = False
         self._pending_start = False
@@ -383,6 +388,10 @@ class VoiceCapture:
         label = shortcut_label((shortcut or {}).get("key", ""))
         self._label = "录音键" if label in ("", "未设置") else label
         self.owner = owner
+        # macOS 上 CapsLock 是系统切换键，pynput 只报一次瞬时事件，
+        # 无法实现按住说话；提前提示用户换键（客户端默认录音键是右 Option）
+        if sys.platform == "darwin" and (shortcut or {}).get("key") == "caps_lock":
+            self._ready_text = f"macOS 上 {self._label} 无法按住说话，请在「设置」里更换录音键"
         self._write_flag(True)
         try:
             self._listener = _HotkeyListener(shortcut, self._queue_press,
@@ -396,6 +405,7 @@ class VoiceCapture:
             return False
         self._armed = True
         self._data_seen = False
+        self._schedule_flag_refresh()
         self._poll = self.widget.after(POLL_MS, self._drain)
         self._start_opening()
         return True
@@ -425,6 +435,13 @@ class VoiceCapture:
             except Exception:
                 pass
             self._open_job = None
+        self._open_generation += 1  # 使仍在后台打开的流作废
+        if self._flag_job is not None:
+            try:
+                self.widget.after_cancel(self._flag_job)
+            except Exception:
+                pass
+            self._flag_job = None
         if self._timer is not None:
             try:
                 self.widget.after_cancel(self._timer)
@@ -434,7 +451,7 @@ class VoiceCapture:
         self._close_stream()
         while True:
             try:
-                event, value = self._open_queue.get_nowait()
+                event, _generation, value = self._open_queue.get_nowait()
             except queue.Empty:
                 break
             if event == "ok":
@@ -498,26 +515,39 @@ class VoiceCapture:
         """后台打开麦克风并等首个数据，避免按键时才开始预热。"""
         self._opening = True
         self._open_error = None
+        self._open_generation += 1
+        generation = self._open_generation
         self._status("正在准备录音设备…")
 
         def work():
             try:
                 stream, rate = self._open_stream()
             except Exception as exc:
-                self._open_queue.put(("error", str(exc)))
+                self._open_queue.put(("error", generation, str(exc)))
                 return
-            self._open_queue.put(("ok", (stream, rate)))
+            self._open_queue.put(("ok", generation, (stream, rate)))
 
         threading.Thread(target=work, name="voice-capture-open", daemon=True).start()
         self._open_job = self.widget.after(POLL_MS, self._poll_open)
 
     def _poll_open(self):
         self._open_job = None
-        try:
-            event, value = self._open_queue.get_nowait()
-        except queue.Empty:
-            self._open_job = self.widget.after(POLL_MS, self._poll_open)
-            return
+        while True:
+            try:
+                event, generation, value = self._open_queue.get_nowait()
+            except queue.Empty:
+                self._open_job = self.widget.after(POLL_MS, self._poll_open)
+                return
+            if generation == self._open_generation:
+                break
+            # disarm/重新 arm 后作废的流：线程可能刚交付，这里负责收尾
+            if event == "ok":
+                stream, _rate = value
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
         self._opening = False
         if event == "error":
             self._open_error = value
@@ -703,13 +733,29 @@ class VoiceCapture:
         try:
             if active:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(
+                # 原子替换：客户端随时可能读取，避免看到写了一半的 JSON
+                temp = path.with_name(path.name + ".tmp")
+                temp.write_text(
                     json.dumps({"pid": os.getpid(), "ts": time.time()}),
                     encoding="utf-8")
+                os.replace(temp, path)
             else:
                 path.unlink(missing_ok=True)
         except OSError:
             pass
+
+    def _schedule_flag_refresh(self):
+        """占用标记带 ts，客户端超时按残留清理，因此录制模式期间定期刷新。"""
+        if not self._armed:
+            return
+        self._flag_job = self.widget.after(FLAG_REFRESH_MS, self._refresh_flag)
+
+    def _refresh_flag(self):
+        self._flag_job = None
+        if not self._armed:
+            return
+        self._write_flag(True)
+        self._schedule_flag_refresh()
 
 
 class VoicePhrasePanel(ttk.Frame):
@@ -814,7 +860,7 @@ class VoicePhrasePanel(ttk.Frame):
         toplevel = self.winfo_toplevel()
         self._focus_bindings = [
             (sequence, toplevel.bind(sequence, self._focus_changed, add="+"))
-            for sequence in ("<Map>", "<Unmap>")
+            for sequence in ("<Map>", "<Unmap>", "<FocusOut>", "<FocusIn>")
         ]
         merged = self.store.merge_duplicates()
         self.refresh()
@@ -843,10 +889,6 @@ class VoicePhrasePanel(ttk.Frame):
                 return None, f"所选麦克风不可用（{exc}），已回退系统默认，请在「设置」里重新选择"
         except Exception:
             return None, ""
-
-    @classmethod
-    def _default_device(cls):
-        return cls._resolve_device()[0]
 
     @staticmethod
     def _device_name(index):
@@ -1105,12 +1147,22 @@ class VoicePhrasePanel(ttk.Frame):
         try:
             if not self.winfo_exists():
                 return
-            visible = bool(self.winfo_viewable())
+            visible = bool(self.winfo_viewable()) and self._window_focused()
         except tk.TclError:
             return
-        # 最小化到托盘/窗口被隐藏时退出录制模式，避免录音键一直被占用
+        # 最小化到托盘、窗口被隐藏或切到其它程序时退出录制模式，
+        # 避免录音键一直被占用（FocusIn/FocusOut 只对焦点变化做轻量判断）
         if not visible and self.mode_active:
             self.cancel_capture(silent=True)
+
+    def _window_focused(self):
+        """应用是否仍持有焦点；查询失败时按仍有焦点处理，避免误退出。"""
+        try:
+            toplevel = self.winfo_toplevel()
+            return (toplevel.focus_displayof() is not None
+                    or toplevel.focus_get() is not None)
+        except (tk.TclError, KeyError):
+            return True
 
     def _idle_hint(self):
         label = shortcut_label(recording_shortcut().get("key", ""))

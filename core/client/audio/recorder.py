@@ -14,7 +14,6 @@ import uuid
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
-import websockets
 
 from config_client import ClientConfig as Config
 from core.client.state import console
@@ -211,21 +210,9 @@ class AudioRecorder:
                     console.print(f'    录音时长：{self._duration:.2f}s')
                     logger.info(f"录音任务完成，任务ID: {self.task_id}, 时长: {self._duration:.2f}s")
                     
-                    # 告诉服务端音频片段结束了
-                    message = AudioMessage(
-                        task_id=self.task_id,
-                        source='mic',
-                        data='',
-                        is_final=True,
-                        time_start=self._start_time,
-                        seg_duration=Config.mic_seg_duration,
-                        seg_overlap=Config.mic_seg_overlap,
-                        context=Config.context,
-                        language=Config.language,
-                    )
-                    asyncio.create_task(self._send_message(message))
-
-                    # 语音短语匹配（音频层，与识别并行；结果由结果处理器消费）
+                    # 语音短语匹配（音频层；结果由结果处理器消费）。
+                    # 必须在发送 final 之前注册：服务端识别结果可能先于
+                    # 本地匹配返回，晚注册会导致替换丢失且匹配结果残留。
                     if self._voice_enabled and self._voice_cache:
                         audio = np.concatenate(self._voice_cache)
                         self._voice_cache = []
@@ -244,6 +231,20 @@ class AudioRecorder:
                             logger.info(
                                 f"语音短语命中: {', '.join(match.text for match in matches)}"
                             )
+
+                    # 告诉服务端音频片段结束了
+                    message = AudioMessage(
+                        task_id=self.task_id,
+                        source='mic',
+                        data='',
+                        is_final=True,
+                        time_start=self._start_time,
+                        seg_duration=Config.mic_seg_duration,
+                        seg_overlap=Config.mic_seg_overlap,
+                        context=Config.context,
+                        language=Config.language,
+                    )
+                    asyncio.create_task(self._send_message(message))
                     break
 
         except asyncio.CancelledError:

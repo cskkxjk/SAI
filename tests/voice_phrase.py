@@ -14,8 +14,8 @@ from core.client.voice_phrase.matcher import (
     DEFAULT_THRESHOLD,
     PhraseMatch,
     PhraseTemplate,
+    _dtw_subsequence_end,
     best_candidates,
-    dtw_distance,
     match_phrases,
     segment_by_energy,
 )
@@ -64,8 +64,8 @@ class DtwTests(unittest.TestCase):
         a = mfcc(_chirp(300, 900, 1.0))
         b = mfcc(_chirp(300, 900, 1.0) * 0.5)
         c = mfcc(_tone(440, 1.0))
-        same = dtw_distance(a, b)
-        other = dtw_distance(a, c)
+        same = _dtw_subsequence_end(a, b)[0]
+        other = _dtw_subsequence_end(a, c)[0]
         self.assertLess(same, 0.3)
         self.assertGreater(other, same * 2)
 
@@ -284,6 +284,30 @@ class ReplaceTests(unittest.TestCase):
         new_text, applied = apply_replacements("打开帮助", tokens, timestamps, matches)
         self.assertEqual(new_text, "好命中帮助")
         self.assertEqual([m.text for m in applied], ["好命中"])
+
+
+    def test_tokens_are_located_in_accu_and_mapped_back(self):
+        """token 对齐在 text_accu 上：text 多出重复内容时按序列映射。"""
+        tokens = list("你好世界")
+        timestamps = [i * 0.3 for i in range(len(tokens))]
+        new_text, applied = apply_replacements(
+            "你好你好世界", tokens, timestamps, [self._match("问候", 0.0, 0.6)],
+            accu_text="你好世界",
+        )
+        # accu 序列里“你好”紧邻“世界”，映射到 text 中相邻的那一份
+        self.assertEqual(new_text, "你好问候世界")
+        self.assertEqual([m.text for m in applied], ["问候"])
+
+    def test_accu_mapping_falls_back_to_text_when_unusable(self):
+        """accu 与 text 差异大到定位不出区间时，退回直接在 text 上定位。"""
+        tokens = list("你好世界")
+        timestamps = [i * 0.3 for i in range(len(tokens))]
+        new_text, applied = apply_replacements(
+            "你好世界", tokens, timestamps, [self._match("问候", 0.0, 0.6)],
+            accu_text="完全不同的内容",
+        )
+        self.assertEqual(new_text, "问候世界")
+        self.assertEqual([m.text for m in applied], ["问候"])
 
 
 class ManagerTests(unittest.TestCase):

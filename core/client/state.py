@@ -13,7 +13,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Dict, Any
+from typing import TYPE_CHECKING, Optional, Dict
 
 if TYPE_CHECKING:
     import sounddevice as sd
@@ -109,6 +109,7 @@ class ClientState:
         self.paste_override = None
         self._update_recording_indicator(False)
         self.audio_files.clear()
+        self.voice_matches.clear()
         
         logger.debug("客户端状态重置完成")
     

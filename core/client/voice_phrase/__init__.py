@@ -7,7 +7,6 @@ from core.client.voice_phrase.matcher import (
     DEFAULT_THRESHOLD,
     PhraseMatch,
     PhraseTemplate,
-    dtw_distance,
     match_phrases,
     segment_by_energy,
 )
@@ -20,7 +19,6 @@ __all__ = [
     "PhraseMatch",
     "PhraseTemplate",
     "VoicePhraseStore",
-    "dtw_distance",
     "match_phrases",
     "mfcc",
     "segment_by_energy",

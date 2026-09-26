@@ -100,6 +100,7 @@
 - [角色功能如何使用](docs/角色功能如何使用.md) — LLM 角色配置、输出模式、创建新角色
 - [识别语言如何配置](docs/识别语言如何配置.md) — 各引擎语言支持范围与配置方法
 - [文件转录功能如何使用](docs/文件转录功能如何使用.md) — 拖拽转字幕、时间戳对齐
+- [语音短语替换（测试中）](docs/设计-语音短语替换.md) — 说短语直接替换为标注文字（音频层匹配）
 - [显卡加速的若干问题](docs/显卡加速的若干问题.md) — DirectML、Vulkan 加速配置
 - [模型下载的若干问题](docs/模型下载的若干问题.md) — 引擎选择、模型下载、目录结构
 - [常见问题](docs/常见问题.md) — FAQ
@@ -108,7 +109,7 @@
 
 ## 💻 平台支持
 
-SAI 在 **Windows 10/11 (64 位)** 与 **macOS 12+**（Apple Silicon 与 Intel）上构建和测试。
+SAI 在 **Windows 10/11 (64 位)** 与 **macOS 13.3+**（Ventura 及更新系统；Apple Silicon 与 Intel）上构建和测试。
 
 - **Windows**：发布 `sai-desktop-win-x64.exe`（安装包）与 `sai-desktop-win-x64.zip`（便携包，另提供仅客户端的 `sai-client-win-x64.zip`），支持应用内自动更新。
 - **macOS**：发布 `sai-desktop-macos-arm64.zip` / `sai-desktop-macos-x64.zip` 与对应的 `.dmg` 安装镜像；支持 ONNX 引擎（Paraformer、SenseVoice）与 GGUF 引擎（Fun-ASR、Qwen3-ASR）。应用为 ad-hoc 签名，首次打开需右键「打开」；模型不随包分发，首次使用时按需下载。

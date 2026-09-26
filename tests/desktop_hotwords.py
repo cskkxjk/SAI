@@ -79,7 +79,8 @@ class EditorTests(unittest.TestCase):
         self.parent = tk.Tk()
         self.parent.withdraw()
         self.addCleanup(self.parent.destroy)
-        self.editor = HotwordEditor(self.parent, self.root)
+        self.store = VoicePhraseStore(Path(self.temp.name) / "voice-phrases")
+        self.editor = HotwordEditor(self.parent, self.root, voice_store=self.store)
 
     def set_text(self, name, text):
         widget = self.editor.editors[name]
@@ -293,6 +294,8 @@ class VoicePhrasePanelTests(unittest.TestCase):
         capture._write_flag(True)
         payload = json.loads(flag.read_text(encoding="utf-8"))
         self.assertEqual(payload["pid"], os.getpid())
+        self.assertGreater(payload["ts"], 0)
+        self.assertFalse(list(flag.parent.glob("*.tmp")))
         capture._write_flag(False)
         self.assertFalse(flag.exists())
 
@@ -449,7 +452,7 @@ class VoicePhrasePanelTests(unittest.TestCase):
         self.assertTrue(capture._pending_start)
         self.assertFalse(capture.recording)
         stream = Mock()
-        capture._open_queue.put(("ok", (stream, 16000)))
+        capture._open_queue.put(("ok", capture._open_generation, (stream, 16000)))
         capture._poll_open()
         self.assertIs(capture._stream, stream)
         self.assertFalse(capture._pending_start)
@@ -467,6 +470,28 @@ class VoicePhrasePanelTests(unittest.TestCase):
         stream.close.assert_called_once()
         self.assertIsNone(capture._stream)
         self.assertFalse(capture.armed)
+
+    def test_stale_microphone_open_from_the_previous_arm_is_discarded(self):
+        capture = VoiceCapture(self.parent)
+        stale = Mock()
+        capture._armed = True
+        capture._opening = True
+        capture._open_queue.put(("ok", capture._open_generation - 1, (stale, 16000)))
+        capture._open_queue.put(("ok", capture._open_generation, (Mock(), 16000)))
+        capture._poll_open()
+        stale.stop.assert_called_once()
+        stale.close.assert_called_once()
+        self.assertIsNotNone(capture._stream)
+        self.assertFalse(capture._opening)
+
+    def test_losing_window_focus_lets_go_of_the_recording_key(self):
+        self.panel.capture.owner = "panel"
+        self.panel.capture._armed = True
+        with patch.object(type(self.panel), "winfo_viewable", return_value=True), \
+                patch.object(type(self.panel), "_window_focused", return_value=False), \
+                patch.object(VoiceCapture, "disarm", autospec=True) as disarm:
+            self.panel._on_visibility_changed()
+        disarm.assert_called_once()
 
     def test_wait_for_data_detects_silent_streams(self):
         capture = VoiceCapture(self.parent)
@@ -679,7 +704,8 @@ class VoiceTestTests(unittest.TestCase):
             def set_phrase_recording(self, active):
                 events.append(active)
 
-        editor = HotwordEditor(self.parent, self.root, client=Client())
+        editor = HotwordEditor(self.parent, self.root, voice_store=self.store,
+                               client=Client())
         self.addCleanup(editor.destroy)
         self.assertFalse(editor.voice_panel._ready())
         self.assertTrue(editor.voice_panel._loading())
