@@ -107,6 +107,13 @@ class ReleaseAssetsTests(unittest.TestCase):
                 self.assertIn("assets/icon.ico", assignments["my_files"])
                 self.assertNotIn("assets", assignments["link_folders"])
 
+    def test_windows_workflow_builds_portable_zips(self):
+        workflow = (ROOT / ".github" / "workflows" / "build-windows.yml").read_text(
+            encoding="utf-8")
+        self.assertIn("build-client.spec", workflow)
+        self.assertIn("zip_release.py --dist build/installer-stage", workflow)
+        self.assertIn("release\\*.zip", workflow)
+
 
 class ExpatPinTests(unittest.TestCase):
     def test_release_specs_pin_expat_binary(self):

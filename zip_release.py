@@ -9,6 +9,7 @@
 3. 智能排除模型文件（.onnx, .dll, .json 等），但保留说明文档
 """
 
+import argparse
 import os
 import subprocess
 from pathlib import Path
@@ -198,11 +199,21 @@ def package_with_7zip(source_dir, output_zip, file_list_file):
 
 def main():
     """主函数"""
-    dist_dir = Path('dist')
+    parser = argparse.ArgumentParser(
+        description="使用 7-Zip 将 PyInstaller 构建产物打包为发布 zip")
+    parser.add_argument(
+        "--dist", default="dist",
+        help="构建产物目录（PyInstaller --distpath，默认 dist）")
+    parser.add_argument(
+        "--output-dir", default="release",
+        help="zip 输出目录（默认 release）")
+    args = parser.parse_args()
+
+    dist_dir = Path(args.dist)
 
     # 检查 dist 目录
     if not dist_dir.exists():
-        print(f"错误: dist 目录不存在")
+        print(f"错误: {dist_dir} 目录不存在")
         print(f"请先运行 PyInstaller 构建: pyinstaller build.spec")
         return
 
@@ -211,8 +222,8 @@ def main():
     print("=" * 60)
 
     # 构建输出目录
-    release_dir = Path('release')
-    release_dir.mkdir(exist_ok=True)
+    release_dir = Path(args.output_dir)
+    release_dir.mkdir(parents=True, exist_ok=True)
 
     # 打包配置列表
     packages = []

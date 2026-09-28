@@ -66,6 +66,13 @@ jobs:
       - name: 打包（PyInstaller → installer-stage）
         run: uv run --locked --group build python -m PyInstaller --noconfirm --distpath build/installer-stage build-desktop.spec
 
+      - name: 打包客户端（PyInstaller → installer-stage）
+        continue-on-error: true
+        run: uv run --locked --group build python -m PyInstaller --noconfirm --distpath build/installer-stage build-client.spec
+
+      - name: 生成便携 zip（sai-desktop-win-x64.zip / sai-client-win-x64.zip）
+        run: uv run --locked --group build python zip_release.py --dist build/installer-stage --output-dir release
+
       - name: 离线自检（不阻塞）
         continue-on-error: true
         shell: pwsh
@@ -92,7 +99,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sai-desktop-win-x64
-          path: dist/installer/sai-desktop-win-x64.exe
+          path: |
+            dist/installer/sai-desktop-win-x64.exe
+            release/
           if-no-files-found: error
 
       - name: 附加到 Release（若已存在）
@@ -102,7 +111,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ steps.version.outputs.version }}"
-          gh release upload $tag "dist\installer\sai-desktop-win-x64.exe" --clobber
+          $files = @("dist\installer\sai-desktop-win-x64.exe")
+          $files += @(Get-ChildItem release\*.zip -ErrorAction SilentlyContinue | ForEach-Object FullName)
+          gh release upload $tag $files --clobber
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::warning::Release $tag 尚不存在或上传失败，安装包保留在 Artifact 中"
           } else {
