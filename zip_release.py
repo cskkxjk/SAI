@@ -12,7 +12,13 @@
 import argparse
 import os
 import subprocess
+import sys
 from pathlib import Path
+
+# Windows CI 的 Python 默认用 cp1252 输出，中文日志会抛 UnicodeEncodeError，统一切到 UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def find_7zip():
@@ -159,6 +165,7 @@ def package_with_7zip(source_dir, output_zip, file_list_file):
     print(f"\n正在打包: {source_path.name}")
     print(f"输出文件: {output_zip}")
     print(f"打包文件数: {files_count}")
+    print(f"使用 7-Zip: {seven_zip}")
     print(f"工作目录: {dist_dir.absolute()}")
 
     # 执行压缩（从 dist 目录运行）
@@ -197,8 +204,8 @@ def package_with_7zip(source_dir, output_zip, file_list_file):
                 break
 
 
-def main():
-    """主函数"""
+def main() -> int:
+    """主函数（返回进程退出码：0 = 全部打包成功）"""
     parser = argparse.ArgumentParser(
         description="使用 7-Zip 将 PyInstaller 构建产物打包为发布 zip")
     parser.add_argument(
@@ -215,7 +222,7 @@ def main():
     if not dist_dir.exists():
         print(f"错误: {dist_dir} 目录不存在")
         print(f"请先运行 PyInstaller 构建: pyinstaller build.spec")
-        return
+        return 1
 
     print("=" * 60)
     print("SAI 打包脚本")
@@ -251,7 +258,7 @@ def main():
         print(f"请先运行 PyInstaller 构建:")
         print(f"  pyinstaller build.spec")
         print(f"  pyinstaller build-client.spec")
-        return
+        return 1
 
     print(f"\n找到 {len(packages)} 个待打包的构建产物")
 
@@ -308,6 +315,8 @@ def main():
             size_mb = file.stat().st_size / (1024 * 1024)
             print(f"  {file.name} ({size_mb:.1f} MB)")
 
+    return 0 if success_count == len(packages) else 1
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

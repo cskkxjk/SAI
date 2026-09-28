@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
+import zip_release
 from zip_release import create_file_list
 
 
@@ -113,6 +114,18 @@ class ReleaseAssetsTests(unittest.TestCase):
         self.assertIn("build-client.spec", workflow)
         self.assertIn("zip_release.py --dist build/installer-stage", workflow)
         self.assertIn("release\\*.zip", workflow)
+
+    def test_zip_release_forces_utf8_logging(self):
+        """Windows CI 的 stdout 是 cp1252，中文/emoji 日志会抛 UnicodeEncodeError
+        （2026-09-28 的 CI 因第一行中文日志直接失败）"""
+        source = (ROOT / "zip_release.py").read_text(encoding="utf-8")
+        self.assertIn('reconfigure(encoding="utf-8"', source)
+
+    def test_zip_release_reports_failure_exit_code(self):
+        with mock.patch.object(
+                sys, "argv",
+                ["zip_release.py", "--dist", "不存在的目录", "--output-dir", "release"]):
+            self.assertEqual(zip_release.main(), 1)
 
 
 class ExpatPinTests(unittest.TestCase):

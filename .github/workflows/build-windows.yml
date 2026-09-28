@@ -71,7 +71,14 @@ jobs:
         run: uv run --locked --group build python -m PyInstaller --noconfirm --distpath build/installer-stage build-client.spec
 
       - name: 生成便携 zip（sai-desktop-win-x64.zip / sai-client-win-x64.zip）
-        run: uv run --locked --group build python zip_release.py --dist build/installer-stage --output-dir release
+        shell: pwsh
+        run: |
+          uv run --locked --group build python zip_release.py --dist build/installer-stage --output-dir release 2>&1 | Tee-Object zip_release.log
+          if ($LASTEXITCODE -ne 0) {
+            $tail = ((Get-Content zip_release.log -Tail 30 -Encoding utf8) -join "`n") -replace '%', '%25' -replace "`r?`n", '%0A'
+            Write-Output "::error title=zip_release.py failed::$tail"
+            exit 1
+          }
 
       - name: 离线自检（不阻塞）
         continue-on-error: true
