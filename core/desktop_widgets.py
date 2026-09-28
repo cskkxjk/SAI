@@ -11,6 +11,8 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 from core.shortcut_keys import KeyCapture, join_chord, shortcut_label
+from core.ui.toast_constants import DEFAULT_FONT_FAMILY as FONT_FAMILY
+from core.ui.toast_constants import ui_font_size
 
 try:  # Pillow ships with the tray stack; keep a vector fallback just in case.
     from PIL import Image, ImageDraw, ImageFilter, ImageTk
@@ -18,8 +20,6 @@ try:  # Pillow ships with the tray stack; keep a vector fallback just in case.
     HAS_PIL = True
 except ImportError:  # pragma: no cover - only hit without Pillow installed
     HAS_PIL = False
-
-FONT_FAMILY = "Microsoft YaHei UI"
 
 PAGE_BG = "#ECECEC"
 SIDEBAR_BG = "#F5F5F5"
@@ -48,7 +48,7 @@ SIDEBAR = SIDEBAR_BG
 
 
 def ui_font(size=9, weight="normal"):
-    return (FONT_FAMILY, size, weight)
+    return (FONT_FAMILY, ui_font_size(size), weight)
 
 
 SHADOW_PAD = 3

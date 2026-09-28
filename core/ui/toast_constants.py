@@ -3,13 +3,29 @@ Toast 常量定义模块
 
 集中管理所有 Toast 窗口相关的常量。
 """
+import sys
 import tkinter as tk
 
 # ============================================================
 # 字体和样式常量
 # ============================================================
 
-DEFAULT_FONT_FAMILY = 'Microsoft YaHei UI'
+IS_MACOS = sys.platform == "darwin"
+
+# macOS 的 Tk 把正数字号直接当作 NSFont 点数渲染，不按屏幕 DPI 换算，
+# 且 tk scaling 对点数字号无效，因此需要手动放大字号才能与 Windows 观感一致。
+MAC_FONT_SCALE = 1.4
+
+DEFAULT_FONT_FAMILY = 'PingFang SC' if IS_MACOS else 'Microsoft YaHei UI'
+
+
+def ui_font_size(size: int) -> int:
+    """按平台换算字体点值：macOS 放大固定倍数，其余平台原样返回。"""
+    if IS_MACOS:
+        return max(1, int(round(size * MAC_FONT_SCALE)))
+    return size
+
+
 DEFAULT_PADDING_X = 20
 DEFAULT_PADDING_Y = 15
 
@@ -51,4 +67,4 @@ DEFAULT_INITIAL_WIDTH = 0.5  # 默认宽度（屏幕的50%）
 
 QUEUE_POLL_INTERVAL_MS = 100  # 队列轮询间隔（毫秒）
 STREAM_CHAR_DELAY_S = 0.0001  # 流式输出每个字符的延迟（秒）
-TK_SCALING_FACTOR = 2  # Tkinter DPI 缩放因子（用于高 DPI 屏幕）
+TK_SCALING_FACTOR = 2  # Tkinter DPI 缩放因子（仅 Windows 生效，macOS 对点数字号无效）

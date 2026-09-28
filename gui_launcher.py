@@ -32,7 +32,7 @@ from core.desktop_widgets import (
     BORDER, CARD_BG, DIVIDER, ERROR, FONT_FAMILY, HOVER_BG, PAGE_BG, PRIMARY,
     SELECTED_BG, SIDEBAR_BG, SUCCESS, TEXT, TEXT_SECONDARY, WARNING,
     Card, NavButton, PillButton, ScrollPage, ShortcutCapture, Switch,
-    ui_font,
+    ui_font, ui_font_size,
 )
 from core.shortcut_keys import shortcut_label
 from config_client import __version__ as APP_VERSION
@@ -328,7 +328,7 @@ class Launcher(tk.Tk):
         self.option_add("*TCombobox*Listbox.selectBackground", SELECTED_BG)
         self.option_add("*TCombobox*Listbox.selectForeground", TEXT)
         self.option_add("*TCombobox*Listbox.font",
-                        "{%s} 9" % FONT_FAMILY)
+                        "{%s} %d" % (FONT_FAMILY, ui_font_size(9)))
         self.option_add("*Text.selectBackground", SELECTED_BG)
         self.option_add("*Text.selectForeground", TEXT)
         style.configure("Slim.Vertical.TScrollbar", background="#C1C1C6",

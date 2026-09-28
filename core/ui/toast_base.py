@@ -21,6 +21,7 @@ from .toast_constants import (
     MARKDOWN_MIN_HEIGHT,
     SCROLL_STEP,
     DESTROY_DELAY_MS,
+    ui_font_size,
 )
 from . import logger
 
@@ -127,7 +128,7 @@ class ToastWindowBase(ABC):
         
         # 保存完整文本和样式配置（用于 Markdown 渲染）
         self.full_text = text
-        self.font_size = font_size
+        self.font_size = ui_font_size(font_size)
         self.font_family = font_family if font_family else DEFAULT_FONT_FAMILY
         self.bg = bg
         self.fg = fg

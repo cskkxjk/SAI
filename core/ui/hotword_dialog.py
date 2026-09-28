@@ -14,7 +14,7 @@ from .dialogs import (
     DialogResult,
     wait_window,
 )
-from .toast_constants import DEFAULT_FONT_FAMILY
+from .toast_constants import DEFAULT_FONT_FAMILY, ui_font_size
 from . import logger
 
 
@@ -76,14 +76,14 @@ class HotwordDialog:
         main_frame.pack(fill="both", expand=True)
 
         # 字体设置
-        label_font = (DEFAULT_FONT_FAMILY, 10, "bold")
-        entry_font = (DEFAULT_FONT_FAMILY, 11)
+        label_font = (DEFAULT_FONT_FAMILY, ui_font_size(10), "bold")
+        entry_font = (DEFAULT_FONT_FAMILY, ui_font_size(11))
 
         # 说明
         ttk.Label(
             main_frame,
             text="请输入要添加的热词（每行一个）：",
-            font=(DEFAULT_FONT_FAMILY, 9),
+            font=(DEFAULT_FONT_FAMILY, ui_font_size(9)),
             foreground="#666666"
         ).pack(anchor="w", pady=(0, 10))
 
@@ -138,7 +138,7 @@ class HotwordDialog:
             button_frame,
             text="确定 (Ctrl+Enter)",
             command=on_confirm,
-            font=(DEFAULT_FONT_FAMILY, 9),
+            font=(DEFAULT_FONT_FAMILY, ui_font_size(9)),
             bg="#4CAF50",
             fg="white",
             activebackground="#45a049",
@@ -154,7 +154,7 @@ class HotwordDialog:
             button_frame,
             text="取消 (Esc)",
             command=on_cancel,
-            font=(DEFAULT_FONT_FAMILY, 9),
+            font=(DEFAULT_FONT_FAMILY, ui_font_size(9)),
             bg="#f44336",
             fg="white",
             activebackground="#da190b",

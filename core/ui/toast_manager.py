@@ -134,7 +134,9 @@ class ToastMessageManager:
         # 创建隐藏的主窗口
         self.root = tk.Tk()
         self.root.withdraw()
-        self.root.tk.call('tk', 'scaling', TK_SCALING_FACTOR)
+        # tk scaling 只影响 Windows 的点数换算；macOS 对点数字号无效，改为放大字号常量
+        if sys.platform == "win32":
+            self.root.tk.call('tk', 'scaling', TK_SCALING_FACTOR)
 
         # 设置窗口关闭时的行为
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)

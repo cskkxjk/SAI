@@ -92,7 +92,7 @@ class ToastWindowLabel(ToastWindowBase):
         self.label = tk.Label(
             self.window,
             text=processed_text,
-            font=(font_name, font_size),
+            font=(font_name, self.font_size),
             fg=fg,
             bg=bg,
             justify=tk.LEFT,

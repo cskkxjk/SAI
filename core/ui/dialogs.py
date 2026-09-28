@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Optional, Callable
 
-from .toast_constants import DEFAULT_FONT_FAMILY
+from .toast_constants import DEFAULT_FONT_FAMILY, ui_font_size
 from . import logger
 
 # DPI 感知设置（与 toast_base.py 保持一致）
@@ -120,7 +120,7 @@ def create_label_button_frame(
 def create_scrolled_text(
     parent: tk.Widget,
     height: int = 5,
-    font: tuple = (DEFAULT_FONT_FAMILY, 10)
+    font: tuple = (DEFAULT_FONT_FAMILY, ui_font_size(10))
 ) -> tk.Text:
     """
     创建带滚动条的文本框
